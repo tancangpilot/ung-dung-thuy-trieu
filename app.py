@@ -7,6 +7,7 @@ import math
 # CẤU HÌNH THÔNG SỐ CƠ BẢN
 # ==========================================
 FILE_EXCEL = '03 tram HL6-HL21-HL27 nam 2026.xlsx'
+NAM_DU_LIEU = 2026
 
 CHANNEL_DEPTHS = {'HL6': 8.8, 'HL21': 8.5, 'HL27': 8.5}
 TRAVEL_TIMES = {
@@ -15,7 +16,7 @@ TRAVEL_TIMES = {
 }
 
 # ==========================================
-# HÀM XỬ LÝ DỮ LIỆU CẢ NĂM (SIÊU BỀN BỈ)
+# HÀM XỬ LÝ DỮ LIỆU CẢ NĂM
 # ==========================================
 @st.cache_data
 def load_tide_data():
@@ -150,15 +151,8 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
             danh_sach_dong.append(dong)
             
     df_tong_hop = pd.DataFrame(danh_sach_dong)
-    if not df_tong_hop.empty:
-        df_tong_hop = df_tong_hop.set_index(['Ngày', 'Điểm'])
-    return df_tong_hop
+    return df_tong_hop # Bỏ set_index để giữ Ngày và Điểm làm cột bình thường
 
-def to_mau_ngay_le(row):
-    ngay = row.name[0]
-    if ngay % 2 != 0:
-        return ['background-color: rgba(255, 215, 0, 0.15)'] * len(row)
-    return [''] * len(row)
 
 # ==========================================
 # GIAO DIỆN WEB (UI) - TỐI ƯU MOBILE/TABLET
@@ -170,6 +164,14 @@ st.markdown("""
     .block-container { padding-top: 1rem; padding-bottom: 2rem; padding-left: 1rem; padding-right: 1rem; }
     .stButton>button { min-height: 55px; font-size: 18px !important; font-weight: bold; border-radius: 8px; }
     .result-card { border: 1px solid #ddd; border-radius: 10px; padding: 15px; margin-bottom: 15px; background-color: #f9f9f9; }
+    .footer {
+        text-align: center;
+        color: #888;
+        font-size: 0.9em;
+        margin-top: 50px;
+        padding-top: 20px;
+        border-top: 1px solid #eaeaea;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -191,7 +193,6 @@ with tab1:
         ngay_pob = st.date_input("Ngày POB", value=datetime.today())
     with col2:
         huong_di = st.selectbox("Hướng di chuyển", options=["OUTBOUND", "INBOUND"])
-        # Đã thiết lập bước nhảy 30 phút (00h, 00h30, 01h...)
         gio_pob = st.time_input("Giờ POB", value=datetime.strptime('08:30', '%H:%M').time(), step=timedelta(minutes=30))
 
     st.write("")
@@ -233,13 +234,40 @@ with tab2:
     with col_thang:
         thang_chon = st.selectbox("📅 Chọn Tháng hiển thị:", list(range(1, 13)), index=datetime.today().month - 1)
     
+    # --- Hàm tô màu cập nhật: Áp dụng cho dòng đã trở thành cột bình thường ---
+    def style_dataframe(row):
+        ngay = row['Ngày']
+        diem = row['Điểm']
+        
+        try:
+            is_sunday = datetime(NAM_DU_LIEU, thang_chon, int(ngay)).weekday() == 6
+        except:
+            is_sunday = False
+            
+        # Ưu tiên màu đỏ Chủ nhật phủ lên toàn bộ
+        if is_sunday:
+            return ['background-color: #ffcccc; color: #b30000; font-weight: bold;'] * len(row)
+            
+        # Tô màu theo điểm cạn
+        if diem == 'HL6':
+            return ['background-color: #e6f2ff'] * len(row)
+        elif diem == 'HL21':
+            return ['background-color: #e6ffe6'] * len(row)
+        elif diem == 'HL27':
+            return ['background-color: #fff2e6'] * len(row)
+            
+        return [''] * len(row)
+
     bang_tong_hop = tao_bang_mon_nuoc_toi_da(data_dict, thang_chon)
     
     if not bang_tong_hop.empty:
-        bang_co_mau = bang_tong_hop.style.apply(to_mau_ngay_le, axis=1)
-        st.dataframe(bang_co_mau, use_container_width=True, height=500)
+        # Tô màu và hiển thị
+        bang_co_mau = bang_tong_hop.style.apply(style_dataframe, axis=1)
         
-        csv = bang_tong_hop.to_csv(encoding='utf-8-sig')
+        # hide_index=True giúp giấu đi cột số thứ tự (0, 1, 2...) vô nghĩa của bảng
+        st.dataframe(bang_co_mau, use_container_width=True, height=500, hide_index=True)
+        
+        csv = bang_tong_hop.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
             label=f"📥 Tải Bảng Tháng {thang_chon} (CSV)",
             data=csv,
@@ -249,3 +277,10 @@ with tab2:
         )
     else:
         st.warning(f"Dữ liệu Tháng {thang_chon} bị thiếu ở một hoặc nhiều trạm. Vui lòng kiểm tra lại file Excel.")
+
+# --- Dòng chữ miễn trừ trách nhiệm ---
+st.markdown("""
+<div class="footer">
+    <i>This website was created by NP44. The calculated data is not for commercial purposes. I assume no liability or responsibility for any external use of this calculated data.</i>
+</div>
+""", unsafe_allow_html=True)
