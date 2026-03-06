@@ -20,7 +20,6 @@ TRAVEL_TIMES = {
 @st.cache_data
 def load_tide_data():
     dict_data = {}
-    # Sử dụng 3 chữ cái đầu để bắt lỗi sai chính tả trong Excel (ví dụ Febuary, Jan...)
     month_keys = {
         'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
         'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
@@ -38,9 +37,8 @@ def load_tide_data():
         
         for index, row in df_raw.iterrows():
             val0 = str(row[0]).strip().lower()
-            val1 = str(row[1]).strip().upper().replace(" ", "") # Bắt cả lỗi gõ cách chữ C N
+            val1 = str(row[1]).strip().upper().replace(" ", "")
             
-            # Nhận diện tháng cực kỳ linh hoạt
             is_month = False
             for m_key, m_val in month_keys.items():
                 if m_key in val0:
@@ -52,7 +50,6 @@ def load_tide_data():
             if is_month:
                 continue
                 
-            # Xử lý Ngày
             if current_month > 0:
                 if val1 == 'CN':
                     current_day += 1
@@ -73,7 +70,6 @@ def load_tide_data():
                         
         df_clean = pd.DataFrame(parsed_data)
         if not df_clean.empty:
-            # Chốt chặn lọc các dòng rác trùng ngày
             df_clean = df_clean.drop_duplicates(subset=['Thang', 'Ngay'], keep='first')
             df_clean = df_clean.set_index(['Thang', 'Ngay'])
             dict_data[sheet] = df_clean
@@ -96,7 +92,6 @@ def noi_suy_thuy_trieu(df_tide, eta_time):
     phut = eta_time.minute
     
     try:
-        # Nếu thiếu dữ liệu ngày này trong bảng, trả về None để báo lỗi
         if (thang, ngay) not in df_tide.index:
             return None
             
@@ -125,7 +120,6 @@ def noi_suy_thuy_trieu(df_tide, eta_time):
 def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     danh_sach_dong = []
     try:
-        # Chốt chặn chống KeyError: Chỉ lấy những ngày tồn tại ở CẢ 3 SHEET
         idx_hl6 = data_dict['HL6'].loc[thang_chon].index.tolist() if thang_chon in data_dict['HL6'].index.get_level_values(0) else []
         idx_hl21 = data_dict['HL21'].loc[thang_chon].index.tolist() if thang_chon in data_dict['HL21'].index.get_level_values(0) else []
         idx_hl27 = data_dict['HL27'].loc[thang_chon].index.tolist() if thang_chon in data_dict['HL27'].index.get_level_values(0) else []
@@ -171,7 +165,6 @@ def to_mau_ngay_le(row):
 # ==========================================
 st.set_page_config(page_title="Thủy Triều & Mớn Nước", layout="wide", initial_sidebar_state="collapsed")
 
-# --- CSS Tùy chỉnh cho Giao diện Chạm (Touch-friendly) ---
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 2rem; padding-left: 1rem; padding-right: 1rem; }
@@ -198,7 +191,8 @@ with tab1:
         ngay_pob = st.date_input("Ngày POB", value=datetime.today())
     with col2:
         huong_di = st.selectbox("Hướng di chuyển", options=["OUTBOUND", "INBOUND"])
-        gio_pob = st.time_input("Giờ POB", value=datetime.strptime('08:15', '%H:%M').time())
+        # Đã thiết lập bước nhảy 30 phút (00h, 00h30, 01h...)
+        gio_pob = st.time_input("Giờ POB", value=datetime.strptime('08:30', '%H:%M').time(), step=timedelta(minutes=30))
 
     st.write("")
     if st.button("🚀 KIỂM TRA ĐIỀU KIỆN AN TOÀN", use_container_width=True):
@@ -230,7 +224,7 @@ with tab1:
                     st.write(f"🕒 **ETA:** {eta.strftime('%H:%M %d/%m')}")
                     st.write(f"📏 **Yêu cầu (UKC {int(ukc_pct*100)}%):** {req_depth:.2f} m")
                     st.write(f"🌊 **Thực tế:** {actual_depth:.2f} m")
-                    st.caption(f"(Luồng {CHANNEL_DEPTHS[point]}m + Triều {tide_height}m)")
+
 with tab2:
     st.markdown("### 🌊 Tra cứu bảng Mớn tối đa")
     st.caption("UKC: Ban ngày (06h-17h) 7%, Ban đêm 10%. (Cuộn ngang để xem hết giờ).")
