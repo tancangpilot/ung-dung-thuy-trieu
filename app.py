@@ -269,16 +269,15 @@ with tab1:
 
 with tab2:
     st.markdown("### 🌊 Tra cứu bảng Mớn tối đa 6 Điểm")
-    
     st.markdown("""
     <div style="font-size: 0.95em; color: #555; margin-bottom: 15px; padding: 10px; background-color: #f0f2f6; border-radius: 5px;">
-        UKC: Ban ngày (06h-17h) 7%, Ban đêm 10%. &nbsp;|&nbsp; 🔴 <b>Chủ Nhật (Sun)</b> <br>
-        🔵 Đèn Đỏ (HL6)=<strong style="color: #ff0000;">-8.8m</strong>; 
-        🔵 Cout de L’est (HL21)=<strong style="color: #ff0000;">-8.5m</strong>; 
-        🔵 Dần Xây (HL27)=<strong style="color: #ff0000;">-8.5m</strong>; <br>
-        🟠 Bờ Băng (BB)=<strong style="color: #ff0000;">-6.7m</strong>; 
-        🟠 Vàm Láng (VL)=<strong style="color: #ff0000;">-8.0m</strong>; 
-        🟠 Hạ Lưu TCHP(TCHP)=<strong style="color: #ff0000;">-8.0m</strong>.
+        UKC: Ban ngày (06h-17h) 7%, Ban đêm 10%. &nbsp;|&nbsp;
+        Đèn Đỏ (HL6)=<strong style="color: #ff0000;">-8.8m</strong>; 
+        Cout de L’est (HL21)=<strong style="color: #ff0000;">-8.5m</strong>; 
+        Dần Xây (HL27)=<strong style="color: #ff0000;">-8.5m</strong>; 
+        Bờ Băng (BB)=<strong style="color: #ff0000;">-6.7m</strong>; 
+        Vàm Láng (VL)=<strong style="color: #ff0000;">-8.0m</strong>; 
+        Hạ Lưu TCHP(TCHP)=<strong style="color: #ff0000;">-8.0m</strong>.
     </div>
     """, unsafe_allow_html=True)
     
@@ -309,46 +308,49 @@ with tab2:
         else:
             df_loc = bang_tong_hop_csv.copy()
 
-        # THỦ THUẬT NÂNG CẤP TỐI THƯỢNG: Global Counter không bao giờ reset
-        # Đảm bảo 100% Unique Index cho toàn bộ bảng.
+        # THỦ THUẬT NÂNG CẤP: Dùng Ký tự rỗng (Zero-width space) cộng dồn liên tục
+        # Đảm bảo 100% Unique Index trên toàn bộ bảng, Pandas sẽ không báo lỗi
         real_dates = df_loc.index.get_level_values(0).tolist()
-        real_points = df_loc.index.get_level_values(1).tolist()
-        
         new_level_0 = []
-        new_level_1 = []
         last_d = None
         hidden_char = '\u200b'
-        global_counter = 1  # Không bao giờ reset biến này!
+        counter = 1
         
-        for d, p in zip(real_dates, real_points):
-            # Xử lý Cột Ngày
+        for d in real_dates:
             if d != last_d:
-                disp_d = f"🔴 {d}" if "Sun" in d else d
-                new_level_0.append(disp_d)
+                new_level_0.append(d)
                 last_d = d
             else:
-                new_level_0.append(hidden_char * global_counter)
-                global_counter += 1
-                
-            # Xử lý Cột Điểm
-            if p in ['HL6', 'HL21', 'HL27']:
-                new_level_1.append(f"🔵 {p}")
-            elif p in ['VL', 'BB', 'TCHP']:
-                new_level_1.append(f"🟠 {p}")
-            else:
-                new_level_1.append(p)
+                new_level_0.append(hidden_char * counter)
+                counter += 1
                 
         df_display = df_loc.copy()
-        df_display.index = pd.MultiIndex.from_arrays([new_level_0, new_level_1], names=['Ngày', 'Điểm'])
+        df_display.index = pd.MultiIndex.from_arrays([new_level_0, df_display.index.get_level_values(1)], names=['Ngày', 'Điểm'])
 
         def apply_styles(df):
             styles = pd.DataFrame('', index=df.index, columns=df.columns)
             for i in range(len(df)):
-                if "Sun" in real_dates[i]:
-                    styles.iloc[i, :] = 'background-color: rgba(255, 77, 77, 0.15); color: #ff4d4d; font-weight: bold;'
+                real_ngay = real_dates[i]
+                is_sunday = "Sun" in real_ngay
+                if is_sunday:
+                    styles.iloc[i, :] = 'background-color: #ffcccc; color: #b30000; font-weight: bold;'
             return styles
 
         bang_co_mau = df_display.style.apply(apply_styles, axis=None)
+        
+        def style_index(val):
+            if val in ['HL6', 'HL21', 'HL27']:
+                return 'color: #33ccff; font-weight: bold;'
+            elif val in ['VL', 'BB', 'TCHP']:
+                return 'color: #ff9933; font-weight: bold;'
+            elif isinstance(val, str) and ('\n' in val or '\u200b' in val):
+                return 'font-weight: bold;'
+            return 'font-weight: bold;'
+            
+        try:
+            bang_co_mau = bang_co_mau.map_index(style_index, axis=0)
+        except:
+            pass
 
         st.dataframe(bang_co_mau, use_container_width=True, height=600)
         
