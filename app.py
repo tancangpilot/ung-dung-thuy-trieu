@@ -126,7 +126,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 Kiểm Tra Mớn Nước Tàu - Hệ thống Tuyến Luồng")
+st.title("🚢 Kiểm Tra: Mớn Nước & Giờ POB Các Tuyến Luồng")
 
 data_dict = load_tide_data()
 if data_dict is None:
