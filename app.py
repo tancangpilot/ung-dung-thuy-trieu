@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import math
 
 # ==========================================
@@ -27,7 +27,7 @@ ROUTES = {
 }
 
 # ==========================================
-# HÀM XỬ LÝ DỮ LIỆU CẢ NĂM
+# HÀM XỬ LÝ DỮ LIỆU
 # ==========================================
 @st.cache_data
 def load_tide_data():
@@ -121,6 +121,8 @@ st.markdown("""
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
     .stButton>button { min-height: 55px; font-weight: bold; border-radius: 8px; }
     .footer { text-align: justify; color: #888; font-size: 0.85em; margin-top: 60px; border-top: 1px solid #eaeaea; padding-top: 20px; }
+    .safe-window { background-color: #e6ffed; border-left: 5px solid #2ea043; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
+    .unsafe-window { background-color: #ffebe9; border-left: 5px solid #cf222e; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -130,19 +132,21 @@ data_dict = load_tide_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-tab1, tab2 = st.tabs(["🚀 ĐÁNH GIÁ POB", "📅 BẢNG MỚN TỐI ĐA"])
+# THÊM TAB 3 VÀO DANH SÁCH TABS
+tab1, tab2, tab3 = st.tabs(["🚀 ĐÁNH GIÁ POB (Cụ thể)", "📅 BẢNG MỚN TỐI ĐA", "⏱️ ĐÁNH GIÁ POB QUA DRAFT (Tìm giờ)"])
 
+# ----------------- TAB 1: ĐÁNH GIÁ CỤ THỂ -----------------
 with tab1:
     col1, col2 = st.columns(2)
     with col1:
-        mon_nuoc = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1)
-        ngay_pob = st.date_input("Ngày POB", datetime.today(), format="DD/MM/YYYY")
-        gio_pob = st.time_input("Giờ POB", datetime.strptime('08:30', '%H:%M').time())
+        mon_nuoc = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t1_mon")
+        ngay_pob = st.date_input("Ngày POB", datetime.today(), format="DD/MM/YYYY", key="t1_ngay")
+        gio_pob = st.time_input("Giờ POB", datetime.strptime('08:30', '%H:%M').time(), key="t1_gio")
     with col2:
-        huong_di = st.selectbox("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"])
-        tuyen_luong = st.selectbox("Tuyến luồng (Route)", list(ROUTES[huong_di].keys()))
+        huong_di = st.selectbox("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], key="t1_huong")
+        tuyen_luong = st.selectbox("Tuyến luồng (Route)", list(ROUTES[huong_di].keys()), key="t1_tuyen")
 
-    if st.button("🚀 KIỂM TRA ĐIỀU KIỆN AN TOÀN", use_container_width=True):
+    if st.button("🚀 KIỂM TRA ĐIỀU KIỆN AN TOÀN", use_container_width=True, key="btn_t1"):
         pob_t = datetime.combine(ngay_pob, gio_pob)
         st.markdown(f"### 📊 KẾT QUẢ: {tuyen_luong}")
         pts = ROUTES[huong_di][tuyen_luong]
@@ -160,6 +164,7 @@ with tab1:
                     st.write(f"📏 Yêu cầu: {req:.2f}m | 🌊 Thực tế: {act:.2f}m")
                     st.caption(f"(Luồng {CHANNEL_DEPTHS[p]}m + Triều {t_h}m)")
 
+# ----------------- TAB 2: BẢNG MỚN TỐI ĐA -----------------
 with tab2:
     st.markdown("""
     <div style="font-size: 0.95em; color: #555; margin-bottom: 10px; padding: 10px; background-color: #f0f2f6; border-radius: 5px;">
@@ -170,13 +175,11 @@ with tab2:
     """, unsafe_allow_html=True)
     
     bay_gio = datetime.now()
-    
-    # SẮP XẾP LẠI: Nút hiện ngày cũ nằm cạnh ô chọn Tháng
     col_th, col_ck, col_tu = st.columns([1, 1, 2])
     with col_th:
         thang_ch = st.selectbox("📅 Tháng", list(range(1, 13)), bay_gio.month - 1)
     with col_ck:
-        st.write("") # Tạo khoảng cách để checkbox thẳng hàng với selectbox
+        st.write("") 
         show_old = st.checkbox("Hiện ngày đã qua", value=False)
     with col_tu:
         tu_sel = st.selectbox("🔍 Lọc bảng theo Tuyến:", ["1. Hiển thị tất cả 6 điểm cạn", "2. P0VT – LÒNG TÀU – CÁT LÁI", "3. P0SR – SOÀI RẠP – TC HIỆP PHƯỚC", "4. CÁT LÁI – SOÀI RẠP – P0SR"])
@@ -185,30 +188,19 @@ with tab2:
     
     if not bang_raw.empty:
         df_f = bang_raw.copy()
-        
-        # 1. Lọc ngày hiện tại (Chỉ áp dụng khi xem tháng hiện tại và KHÔNG tích checkbox)
         if thang_ch == bay_gio.month and not show_old:
             df_f = df_f[df_f['Ngay_Goc'] >= bay_gio.day]
 
-        # 2. Lọc theo Tuyến luồng (Thực hiện sau khi lọc ngày)
-        if tu_sel == "2. P0VT – LÒNG TÀU – CÁT LÁI":
-            df_f = df_f[df_f['Điểm'].isin(['HL27','HL21','HL6'])]
-        elif tu_sel == "3. P0SR – SOÀI RẠP – TC HIỆP PHƯỚC":
-            df_f = df_f[df_f['Điểm'].isin(['VL','TCHP'])]
-        elif tu_sel == "4. CÁT LÁI – SOÀI RẠP – P0SR":
-            df_f = df_f[df_f['Điểm'].isin(['BB','VL'])]
+        if tu_sel == "2. P0VT – LÒNG TÀU – CÁT LÁI": df_f = df_f[df_f['Điểm'].isin(['HL27','HL21','HL6'])]
+        elif tu_sel == "3. P0SR – SOÀI RẠP – TC HIỆP PHƯỚC": df_f = df_f[df_f['Điểm'].isin(['VL','TCHP'])]
+        elif tu_sel == "4. CÁT LÁI – SOÀI RẠP – P0SR": df_f = df_f[df_f['Điểm'].isin(['BB','VL'])]
 
-        # Xử lý gộp ô (Merge cells visual)
         ngay_list = df_f['Ngày'].tolist()
         new_ngay = []
         last_d, h_char, global_cnt = None, '\u200b', 1
         for d in ngay_list:
-            if d != last_d: 
-                new_ngay.append(d)
-                last_d = d
-            else: 
-                new_ngay.append(h_char * global_cnt)
-                global_cnt += 1
+            if d != last_d: new_ngay.append(d); last_d = d
+            else: new_ngay.append(h_char * global_cnt); global_cnt += 1
         
         df_f['Ngày'] = new_ngay
         df_disp = df_f.drop(columns=['Ngay_Goc']).set_index(['Ngày', 'Điểm'])
@@ -232,6 +224,101 @@ with tab2:
         st.download_button("📥 Tải Bảng Dữ Liệu Hiện Tại (CSV)", csv, f"Tide_{thang_ch}.csv", "text/csv", use_container_width=True)
     else:
         st.warning(f"Dữ liệu Tháng {thang_ch} bị thiếu.")
+
+
+# ----------------- TAB 3: TÌM GIỜ POB QUA DRAFT -----------------
+with tab3:
+    st.markdown("### 🔍 Tìm các khung giờ an toàn trong ngày")
+    
+    col3_1, col3_2 = st.columns(2)
+    with col3_1:
+        mon_nuoc_t3 = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t3_mon")
+        ngay_pob_t3 = st.date_input("Ngày dự kiến POB", datetime.today(), format="DD/MM/YYYY", key="t3_ngay")
+    with col3_2:
+        huong_di_t3 = st.selectbox("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], key="t3_huong")
+        tuyen_luong_t3 = st.selectbox("Tuyến luồng (Route)", list(ROUTES[huong_di_t3].keys()), key="t3_tuyen")
+
+    if st.button("⏱️TÌM GIỜ POB AN TOÀN", use_container_width=True, key="btn_t3"):
+        st.markdown("---")
+        pts = ROUTES[huong_di_t3][tuyen_luong_t3]
+        
+        ket_qua = []
+        khung_gio_an_toan = []
+        dang_trong_khung_an_toan = False
+        gio_bat_dau = None
+        
+        # Quét từng 30 phút trong suốt 24h
+        for h in range(24):
+            for m in [0, 30]:
+                thoi_gian_xet = time(h, m)
+                pob_t = datetime.combine(ngay_pob_t3, thoi_gian_xet)
+                
+                is_safe = True
+                ly_do = ""
+                min_clearance = 999
+                diem_can_nhat = ""
+
+                for p, travel_h in pts.items():
+                    if p not in data_dict:
+                        is_safe, ly_do = False, f"Thiếu dữ liệu trạm {p}"
+                        break
+                        
+                    eta = pob_t + timedelta(hours=travel_h)
+                    req, ukc_pct = tinh_ukc(mon_nuoc_t3, eta)
+                    tide_h = noi_suy_thuy_trieu(data_dict[p], eta)
+
+                    if tide_h is None:
+                        is_safe, ly_do = False, f"Vượt quá ngày có DL Triều"
+                        break
+
+                    act = CHANNEL_DEPTHS[p] + tide_h
+                    clearance = act - req
+
+                    if clearance < 0:
+                        is_safe = False
+                        if clearance < min_clearance:
+                            min_clearance = clearance
+                            diem_can_nhat = p
+                            ly_do = f"Cạn tại {p} (Thiếu {-clearance:.2f}m)"
+                            
+                # Lưu vào danh sách bảng chi tiết
+                if is_safe:
+                    ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "✅ AN TOÀN", "Ghi chú": "Lọt toàn tuyến"})
+                    # Ghi nhận cửa sổ thời gian
+                    if not dang_trong_khung_an_toan:
+                        gio_bat_dau = thoi_gian_xet.strftime('%H:%M')
+                        dang_trong_khung_an_toan = True
+                else:
+                    ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "❌ CẠN", "Ghi chú": ly_do})
+                    # Đóng cửa sổ thời gian
+                    if dang_trong_khung_an_toan:
+                        gio_ket_thuc = (datetime.combine(ngay_pob_t3, thoi_gian_xet) - timedelta(minutes=30)).strftime('%H:%M')
+                        khung_gio_an_toan.append(f"{gio_bat_dau} đến {gio_ket_thuc}")
+                        dang_trong_khung_an_toan = False
+        
+        # Chốt lại khung giờ nếu kết thúc ngày vẫn an toàn
+        if dang_trong_khung_an_toan:
+            khung_gio_an_toan.append(f"{gio_bat_dau} đến 23:30")
+
+        # IN RA MÀN HÌNH TỔNG HỢP CỬA SỔ AN TOÀN
+        if len(khung_gio_an_toan) > 0:
+            st.markdown(f"<div class='safe-window'><strong>🎯 KẾT LUẬN:</strong> Tàu có thể POB an toàn trong các khoảng thời gian:<br><h3>" + " <br> ".join([f"🕒 {k}" for k in khung_gio_an_toan]) + "</h3></div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='unsafe-window'><strong>⚠️ KẾT LUẬN:</strong> Không có bất kỳ khung giờ nào trong ngày đáp ứng đủ mớn nước này!</div>", unsafe_allow_html=True)
+
+        st.write("")
+        st.markdown("#### 📋 Bảng giờ chi tiết")
+        
+        df_kq = pd.DataFrame(ket_qua)
+        
+        # Hàm tô màu bảng quét
+        def color_status(val):
+            if val == "✅ AN TOÀN": return 'color: #009900; font-weight: bold;'
+            elif val == "❌ CẠN": return 'color: #cc0000; font-weight: bold;'
+            return ''
+            
+        styled_kq = df_kq.style.map(color_status, subset=['Trạng thái'])
+        st.dataframe(styled_kq, use_container_width=True, height=400)
 
 # ==========================================
 # DISCLAIMER PHÁP LÝ CHUẨN QUỐC TẾ
