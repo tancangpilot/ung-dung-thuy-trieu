@@ -27,8 +27,25 @@ ROUTES = {
 }
 
 # ==========================================
-# HÀM XỬ LÝ DỮ LIỆU
+# HÀM XỬ LÝ TOÁN HỌC & DỮ LIỆU
 # ==========================================
+def lam_tron_hang_hai(val):
+    """
+    Luật làm tròn Hàng Hải: Xét chữ số thập phân thứ 2.
+    - Từ 4 trở lên (4,5,6,7,8,9) -> Làm tròn lên.
+    - Dưới 4 (0,1,2,3) -> Giữ nguyên.
+    Ví dụ: 10.54 -> 10.6 | 8.63 -> 8.6
+    """
+    if val is None:
+        return None
+    # Xử lý sai số phẩy động của máy tính (VD: 10.540000000001)
+    v_int = int(round(val * 100, 2))
+    hang_phan_tram = v_int % 10
+    if hang_phan_tram >= 4:
+        return (v_int // 10 + 1) / 10.0
+    else:
+        return (v_int // 10) / 10.0
+
 @st.cache_data
 def load_tide_data():
     dict_data = {}
@@ -70,7 +87,8 @@ def load_tide_data():
 def tinh_ukc(draft, eta_time):
     t = eta_time.time()
     pct = 0.07 if datetime.strptime('05:01','%H:%M').time() <= t <= datetime.strptime('17:59','%H:%M').time() else 0.10
-    return draft * (1 + pct), pct
+    req_depth = draft * (1 + pct)
+    return lam_tron_hang_hai(req_depth), pct
 
 def noi_suy_thuy_trieu(df_tide, eta_time):
     try:
@@ -84,7 +102,9 @@ def noi_suy_thuy_trieu(df_tide, eta_time):
         else: th2, ng2, gi2 = th, ng, gi + 1
         v2 = df_tide.loc[(th2, ng2), gi2] if (th2, ng2) in df_tide.index else v1
         if isinstance(v2, pd.Series): v2 = v2.iloc[0]
-        return round(v1 + ((v2 - v1) * (mi / 60)), 2)
+        
+        raw_val = v1 + ((v2 - v1) * (mi / 60))
+        return lam_tron_hang_hai(raw_val)
     except: return None
 
 @st.cache_data
@@ -105,7 +125,8 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
                     muc = data_dict[point].loc[(thang_chon, ngay), gio]
                     if isinstance(muc, pd.Series): muc = muc.iloc[0]
                     ukc = 0.07 if 6 <= gio <= 17 else 0.10
-                    mon = math.ceil(((CHANNEL_DEPTHS[point] + muc) / (1 + ukc)) * 10) / 10
+                    # Tự động làm tròn mớn tối đa theo quy tắc >= 4 lên
+                    mon = lam_tron_hang_hai((CHANNEL_DEPTHS[point] + muc) / (1 + ukc))
                     dong[f'{gio}h'] = f"{mon:.1f}"
                 danh_sach_dong.append(dong)
     except: return pd.DataFrame()
@@ -126,13 +147,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 Kiểm Tra: Mớn Nước & Giờ POB Các Tuyến Luồng")
+st.title("🚢 Kiểm Tra Mớn Nước Tàu - Hệ thống Tuyến Luồng")
 
 data_dict = load_tide_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-# THÊM TAB 3 VÀO DANH SÁCH TABS
 tab1, tab2, tab3 = st.tabs(["🚀 ĐÁNH GIÁ POB (Cụ thể)", "📅 BẢNG MỚN TỐI ĐA", "⏱️ ĐÁNH GIÁ POB QUA DRAFT (Tìm giờ)"])
 
 # ----------------- TAB 1: ĐÁNH GIÁ CỤ THỂ -----------------
@@ -153,16 +173,16 @@ with tab1:
         cols = st.columns(len(pts))
         for i, (p, h) in enumerate(pts.items()):
             eta = pob_t + timedelta(hours=h)
-            req, ukc_pct = tinh_ukc(mon_nuoc, eta)
+            req, ukc_pct = tinh_ukc(mon_nuoc, eta) 
             with cols[i]:
-                t_h = noi_suy_thuy_trieu(data_dict[p], eta)
+                t_h = noi_suy_thuy_trieu(data_dict[p], eta) 
                 if t_h is not None:
-                    act = CHANNEL_DEPTHS[p] + t_h
+                    act = lam_tron_hang_hai(CHANNEL_DEPTHS[p] + t_h)
                     if act >= req: st.success(f"📍 {p}: ✅ LỌT")
                     else: st.error(f"📍 {p}: ❌ CẠN")
                     st.write(f"🕒 ETA: {eta.strftime('%H:%M %d/%b/%Y')}")
-                    st.write(f"📏 Yêu cầu: {req:.2f}m | 🌊 Thực tế: {act:.2f}m")
-                    st.caption(f"(Luồng {CHANNEL_DEPTHS[p]}m + Triều {t_h}m)")
+                    st.write(f"📏 Yêu cầu: {req:.1f}m | 🌊 Thực tế: {act:.1f}m")
+                    st.caption(f"(Luồng {CHANNEL_DEPTHS[p]:.1f}m + Triều {t_h:.1f}m)")
 
 # ----------------- TAB 2: BẢNG MỚN TỐI ĐA -----------------
 with tab2:
@@ -225,10 +245,9 @@ with tab2:
     else:
         st.warning(f"Dữ liệu Tháng {thang_ch} bị thiếu.")
 
-
 # ----------------- TAB 3: TÌM GIỜ POB QUA DRAFT -----------------
 with tab3:
-    st.markdown("### 🔍 Tìm các khung giờ an toàn trong ngày")
+    st.markdown("### 🔍 Quét toàn bộ khung giờ an toàn trong ngày")
     
     col3_1, col3_2 = st.columns(2)
     with col3_1:
@@ -238,7 +257,7 @@ with tab3:
         huong_di_t3 = st.selectbox("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], key="t3_huong")
         tuyen_luong_t3 = st.selectbox("Tuyến luồng (Route)", list(ROUTES[huong_di_t3].keys()), key="t3_tuyen")
 
-    if st.button("⏱️TÌM GIỜ POB AN TOÀN", use_container_width=True, key="btn_t3"):
+    if st.button("⏱️ QUÉT TÌM GIỜ POB AN TOÀN", use_container_width=True, key="btn_t3"):
         st.markdown("---")
         pts = ROUTES[huong_di_t3][tuyen_luong_t3]
         
@@ -247,7 +266,6 @@ with tab3:
         dang_trong_khung_an_toan = False
         gio_bat_dau = None
         
-        # Quét từng 30 phút trong suốt 24h
         for h in range(24):
             for m in [0, 30]:
                 thoi_gian_xet = time(h, m)
@@ -271,47 +289,41 @@ with tab3:
                         is_safe, ly_do = False, f"Vượt quá ngày có DL Triều"
                         break
 
-                    act = CHANNEL_DEPTHS[p] + tide_h
-                    clearance = act - req
+                    act = lam_tron_hang_hai(CHANNEL_DEPTHS[p] + tide_h)
+                    clearance = round(act - req, 1)
 
                     if clearance < 0:
                         is_safe = False
                         if clearance < min_clearance:
                             min_clearance = clearance
                             diem_can_nhat = p
-                            ly_do = f"Cạn tại {p} (Thiếu {-clearance:.2f}m)"
+                            ly_do = f"Cạn tại {p} (Thiếu {-clearance:.1f}m)"
                             
-                # Lưu vào danh sách bảng chi tiết
                 if is_safe:
                     ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "✅ AN TOÀN", "Ghi chú": "Lọt toàn tuyến"})
-                    # Ghi nhận cửa sổ thời gian
                     if not dang_trong_khung_an_toan:
                         gio_bat_dau = thoi_gian_xet.strftime('%H:%M')
                         dang_trong_khung_an_toan = True
                 else:
                     ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "❌ CẠN", "Ghi chú": ly_do})
-                    # Đóng cửa sổ thời gian
                     if dang_trong_khung_an_toan:
                         gio_ket_thuc = (datetime.combine(ngay_pob_t3, thoi_gian_xet) - timedelta(minutes=30)).strftime('%H:%M')
                         khung_gio_an_toan.append(f"{gio_bat_dau} đến {gio_ket_thuc}")
                         dang_trong_khung_an_toan = False
         
-        # Chốt lại khung giờ nếu kết thúc ngày vẫn an toàn
         if dang_trong_khung_an_toan:
             khung_gio_an_toan.append(f"{gio_bat_dau} đến 23:30")
 
-        # IN RA MÀN HÌNH TỔNG HỢP CỬA SỔ AN TOÀN
         if len(khung_gio_an_toan) > 0:
             st.markdown(f"<div class='safe-window'><strong>🎯 KẾT LUẬN:</strong> Tàu có thể POB an toàn trong các khoảng thời gian:<br><h3>" + " <br> ".join([f"🕒 {k}" for k in khung_gio_an_toan]) + "</h3></div>", unsafe_allow_html=True)
         else:
             st.markdown(f"<div class='unsafe-window'><strong>⚠️ KẾT LUẬN:</strong> Không có bất kỳ khung giờ nào trong ngày đáp ứng đủ mớn nước này!</div>", unsafe_allow_html=True)
 
         st.write("")
-        st.markdown("#### 📋 Bảng giờ chi tiết")
+        st.markdown("#### 📋 Bảng quét chi tiết từng 30 phút")
         
         df_kq = pd.DataFrame(ket_qua)
         
-        # Hàm tô màu bảng quét
         def color_status(val):
             if val == "✅ AN TOÀN": return 'color: #009900; font-weight: bold;'
             elif val == "❌ CẠN": return 'color: #cc0000; font-weight: bold;'
