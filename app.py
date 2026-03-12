@@ -32,7 +32,6 @@ ROUTES = {
 # HÀM XỬ LÝ TOÁN HỌC & THỜI GIAN
 # ==========================================
 def get_vn_time():
-    """Lấy giờ thực tế tại Việt Nam (GMT+7) bất chấp máy chủ đặt ở đâu"""
     return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=7)
 
 def lam_tron_hang_hai(val):
@@ -173,14 +172,14 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# GIAO DIỆN WEB (UI) - DARK/LIGHT MODE SUPPORT
+# GIAO DIỆN WEB (UI) - ÉP HIỂN THỊ LABEL NGANG
 # ==========================================
 st.set_page_config(page_title="Tan Cang Pilot Tide Calculation", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-    .stButton>button { min-height: 55px; font-weight: bold; border-radius: 8px; }
+    .stButton>button { min-height: 55px; font-weight: bold; border-radius: 8px; margin-top: 15px; }
     .footer { text-align: justify; color: gray; font-size: 0.85em; margin-top: 60px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 20px; }
     
     .safe-window { background-color: rgba(46, 160, 67, 0.15); border-left: 5px solid #2ea043; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
@@ -196,6 +195,47 @@ st.markdown("""
     .lw-row { background-color: rgba(255, 75, 75, 0.15); font-weight: bold; color: #ff4b4b; }
     
     div.row-widget.stRadio > div{ flex-direction:row; }
+    
+    /* ======== ÉP LABEL WIDGET NẰM NGANG ======== */
+    [data-testid="stNumberInput"], 
+    [data-testid="stDateInput"], 
+    [data-testid="stTimeInput"], 
+    [data-testid="stSelectbox"], 
+    [data-testid="stMultiSelect"] {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+    }
+    
+    /* Định dạng độ rộng tiêu đề để thẳng hàng nhau */
+    [data-testid="stNumberInput"] > label, 
+    [data-testid="stDateInput"] > label, 
+    [data-testid="stTimeInput"] > label, 
+    [data-testid="stSelectbox"] > label, 
+    [data-testid="stMultiSelect"] > label {
+        width: 100px !important;
+        min-width: 100px !important;
+        margin-bottom: 0px !important;
+        margin-right: 15px;
+        display: flex;
+        align-items: center;
+    }
+    
+    /* Ép ô nhập liệu chiếm hết phần ngang còn lại */
+    [data-testid="stNumberInput"] > div, 
+    [data-testid="stDateInput"] > div, 
+    [data-testid="stTimeInput"] > div, 
+    [data-testid="stSelectbox"] > div, 
+    [data-testid="stMultiSelect"] > div {
+        flex: 1;
+    }
+
+    /* Tinh chỉnh cho Checkbox thẳng hàng */
+    [data-testid="stCheckbox"] {
+        display: flex;
+        align-items: center;
+        padding-top: 8px; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -253,29 +293,25 @@ with tab1:
 with tab2:
     bay_gio_t2 = get_vn_time()
     col_th, col_ck, col_tu = st.columns([1, 1, 2])
-    with col_th: thang_ch = st.selectbox("📅 Tháng", list(range(1, 13)), bay_gio_t2.month - 1)
+    with col_th: 
+        thang_ch = st.selectbox("Tháng", list(range(1, 13)), bay_gio_t2.month - 1)
     with col_ck: 
-        st.write(""); show_old = st.checkbox("Hiện ngày đã qua", value=False)
-    
+        show_old = st.checkbox("Hiện ngày đã qua", value=False)
     with col_tu: 
-        # Sử dụng multiselect ẩn tiêu đề, cho phép chọn nhiều trạm linh hoạt
         diem_options = ['HL6', 'HL21', 'HL27', 'Vàm Láng', 'TC Hiệp Phước', 'Bờ Băng']
-        tu_sel = st.multiselect("Lọc điểm", diem_options, default=['HL6', 'HL27'], label_visibility="collapsed")
+        tu_sel = st.multiselect("Điểm cạn", diem_options, default=['HL6', 'HL27'])
 
     bang_raw = tao_bang_mon_nuoc_toi_da(data_dict, thang_ch)
     if not bang_raw.empty:
         df_f = bang_raw.copy()
         if thang_ch == bay_gio_t2.month and not show_old: df_f = df_f[df_f['Ngay_Goc'] >= bay_gio_t2.day]
         
-        # Ánh xạ tên rút gọn trong dữ liệu gốc thành tên Tiếng Việt đầy đủ
         rev_map = {'HL6': 'HL6', 'HL21': 'HL21', 'HL27': 'HL27', 'VL': 'Vàm Láng', 'TCHP': 'TC Hiệp Phước', 'BB': 'Bờ Băng'}
         df_f['Điểm'] = df_f['Điểm'].map(rev_map)
         
-        # Chỉ giữ lại các trạm mà người dùng đã chọn trong hộp Multiselect
         if tu_sel:
             df_f = df_f[df_f['Điểm'].isin(tu_sel)]
         else:
-            # Nếu người dùng xóa hết chọn lọc, hiển thị bảng trống
             df_f = df_f[df_f['Điểm'].isin([])]
 
         ngay_list = df_f['Ngày'].tolist()
@@ -313,7 +349,7 @@ with tab3:
     
     with col3_1:
         mon_nuoc_t3 = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t3_mon")
-        ngay_pob_t3 = st.date_input("Ngày dự kiến POB", bay_gio_t3.date(), format="DD/MM/YYYY", key="t3_ngay")
+        ngay_pob_t3 = st.date_input("Ngày POB", bay_gio_t3.date(), format="DD/MM/YYYY", key="t3_ngay")
     with col3_2:
         huong_di_t3 = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t3_huong")
         tuyen_luong_t3 = st.radio("Tuyến luồng (Route)", list(ROUTES[huong_di_t3].keys()), key="t3_tuyen")
