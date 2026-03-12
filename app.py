@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 import math
 
 # ==========================================
-# CẤU HÌNH THÔNG SỐ CƠ BẢN
+# CẤU HÌNH THÔNG SỐ CƠ BẢN & MÚI GIỜ
 # ==========================================
 FILE_EXCEL = '06 tram HL6-HL21-HL27-BB-TCHP-VL-HLWVT 2026.xlsx'
 NAM_DU_LIEU = 2026
@@ -29,8 +29,13 @@ ROUTES = {
 }
 
 # ==========================================
-# HÀM XỬ LÝ TOÁN HỌC & DỮ LIỆU
+# HÀM XỬ LÝ TOÁN HỌC & THỜI GIAN
 # ==========================================
+def get_vn_time():
+    """Lấy giờ thực tế tại Việt Nam (GMT+7) bất chấp máy chủ đặt ở đâu"""
+    # Dùng utcnow() cộng thêm 7 tiếng và bỏ qua tzinfo để dễ dàng tính toán
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=7)
+
 def lam_tron_hang_hai(val):
     if val is None: return None
     v_int = int(round(val * 100, 2))
@@ -169,7 +174,7 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# GIAO DIỆN WEB (UI) - HỖ TRỢ DARK MODE TỐI ĐA
+# GIAO DIỆN WEB (UI) - DARK/LIGHT MODE SUPPORT
 # ==========================================
 st.set_page_config(page_title="Tan Cang Pilot Tide Calculation", layout="wide", initial_sidebar_state="collapsed")
 
@@ -179,7 +184,6 @@ st.markdown("""
     .stButton>button { min-height: 55px; font-weight: bold; border-radius: 8px; }
     .footer { text-align: justify; color: gray; font-size: 0.85em; margin-top: 60px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 20px; }
     
-    /* Cập nhật hệ màu trong suốt (rgba) cho Dark/Light Mode */
     .safe-window { background-color: rgba(46, 160, 67, 0.15); border-left: 5px solid #2ea043; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .warn-window { background-color: rgba(212, 167, 44, 0.15); border-left: 5px solid #d4a72c; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .unsafe-window { background-color: rgba(207, 34, 46, 0.15); border-left: 5px solid #cf222e; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
@@ -189,13 +193,12 @@ st.markdown("""
     .tide-table th { font-weight: bold; border-bottom: 1px solid rgba(128, 128, 128, 0.3); padding-bottom: 5px; opacity: 0.8; }
     .tide-table td { padding: 4px 0; border-bottom: 1px dashed rgba(128, 128, 128, 0.1); }
     
-    /* ĐẢO NGƯỢC LOGIC MÀU: HW XANH AN TOÀN, LW ĐỎ CẢNH BÁO CẠN */
     .hw-row { background-color: rgba(0, 153, 255, 0.15); font-weight: bold; color: #0099ff; }
     .lw-row { background-color: rgba(255, 75, 75, 0.15); font-weight: bold; color: #ff4b4b; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 Tan Cang Pilot Tide Calculation")
+st.title("🚢 TAN CANG PILOT TIDE CALCULATION")
 
 st.markdown("""
 <div style="font-size: 0.65em; margin-bottom: 20px; padding: 10px; background-color: rgba(128,128,128,0.1); border-radius: 5px; opacity: 0.9;">
@@ -216,7 +219,8 @@ tab1, tab2, tab3 = st.tabs(["🚀 POB and Draft", "📅 Max Draft Table", "⏱�
 # ----------------- TAB 1: POB AND DRAFT -----------------
 with tab1:
     col1, col2 = st.columns(2)
-    bay_gio = datetime.now()
+    # Lấy giờ hệ thống Việt Nam (Mới)
+    bay_gio = get_vn_time()
     gio_mac_dinh = time(bay_gio.hour, 0)
     
     with col1:
@@ -224,7 +228,8 @@ with tab1:
         ngay_pob = st.date_input("Ngày POB", bay_gio.date(), format="DD/MM/YYYY", key="t1_ngay")
         gio_pob = st.time_input("Giờ POB", gio_mac_dinh, key="t1_gio")
     with col2:
-        huong_di = st.selectbox("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], key="t1_huong")
+        # Thay Selectbox bằng Horizontal Radio Button
+        huong_di = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t1_huong")
         tuyen_luong = st.selectbox("Tuyến luồng (Route)", list(ROUTES[huong_di].keys()), key="t1_tuyen")
 
     if st.button("🚀 KIỂM TRA ĐIỀU KIỆN AN TOÀN", use_container_width=True, key="btn_t1"):
@@ -247,7 +252,7 @@ with tab1:
 
 # ----------------- TAB 2: MAX DRAFT TABLE -----------------
 with tab2:
-    bay_gio_t2 = datetime.now()
+    bay_gio_t2 = get_vn_time()
     col_th, col_ck, col_tu = st.columns([1, 1, 2])
     with col_th: thang_ch = st.selectbox("📅 Tháng", list(range(1, 13)), bay_gio_t2.month - 1)
     with col_ck: 
@@ -288,56 +293,24 @@ with tab2:
 # ----------------- TAB 3: DRAFT FOR POB -----------------
 with tab3:
     col3_1, col3_2 = st.columns(2)
+    bay_gio_t3 = get_vn_time()
+    
     with col3_1:
         mon_nuoc_t3 = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t3_mon")
-        ngay_pob_t3 = st.date_input("Ngày dự kiến POB", datetime.today().date(), format="DD/MM/YYYY", key="t3_ngay")
+        ngay_pob_t3 = st.date_input("Ngày dự kiến POB", bay_gio_t3.date(), format="DD/MM/YYYY", key="t3_ngay")
     with col3_2:
-        huong_di_t3 = st.selectbox("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], key="t3_huong")
+        # Thay Selectbox bằng Horizontal Radio Button
+        huong_di_t3 = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t3_huong")
         tuyen_luong_t3 = st.selectbox("Tuyến luồng (Route)", list(ROUTES[huong_di_t3].keys()), key="t3_tuyen")
 
-    if extremes_data:
-        st.markdown("---")
-        col_y, col_t, col_tm = st.columns(3)
-        dates_to_show = [ngay_pob_t3 - timedelta(days=1), ngay_pob_t3, ngay_pob_t3 + timedelta(days=1)]
-        headers = ["Yesterday", "Today", "Tomorrow"]
-        cols_ui = [col_y, col_t, col_tm]
-
-        for i, d in enumerate(dates_to_show):
-            with cols_ui[i]:
-                day_ex = [e for e in extremes_data if e['dt'].date() == d]
-                st.markdown(f"<div class='tide-box'><strong>{headers[i]} ({d.strftime('%d/%m')})</strong><br>", unsafe_allow_html=True)
-                if day_ex:
-                    html_table = "<table class='tide-table'><tr><th>Phân loại</th><th>Vũng Tàu</th><th>Độ cao</th><th>Cát Lái</th><th>Dòng</th></tr>"
-                    for e in day_ex:
-                        if e['type'] == 'HW':
-                            lag = timedelta(hours=3, minutes=5)
-                            arrow = "↙"
-                            row_class = "hw-row" # Bây giờ sẽ là màu Xanh
-                        else:
-                            lvl = e['level']
-                            if lvl >= 1.5: lag = timedelta(hours=3, minutes=30)
-                            elif 1.0 <= lvl < 1.5: lag = timedelta(hours=3, minutes=35)
-                            elif 0.5 <= lvl < 1.0: lag = timedelta(hours=3, minutes=40)
-                            else: lag = timedelta(hours=3, minutes=45)
-                            arrow = "↗"
-                            row_class = "lw-row" # Bây giờ sẽ là màu Đỏ
-                            
-                        vt_time = e['dt'].strftime('%H:%M')
-                        cl_time = (e['dt'] + lag).strftime('%H:%M')
-                        
-                        html_table += f"<tr class='{row_class}'><td><b>{e['type']}</b></td><td>{vt_time}</td><td>{e['level']:.1f}m</td><td>{cl_time}</td><td>{arrow}</td></tr>"
-                    html_table += "</table>"
-                    st.markdown(html_table, unsafe_allow_html=True)
-                else:
-                    st.write("Không có dữ liệu")
-                st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.button("⏱️TÌM GIỜ CHẠY TÀU", use_container_width=True, key="btn_t3"):
+    # ĐẢO VỊ TRÍ: NÚT BẤM QUÉT LÊN TRÊN BẢNG THỦY TRIỀU
+    if st.button("⏱️ QUÉT TÌM GIỜ CHẠY TÀU", use_container_width=True, key="btn_t3"):
         st.markdown("---")
         pts = ROUTES[huong_di_t3][tuyen_luong_t3]
         
-        current_time = datetime.now()
-        rounded_now = current_time.replace(minute=(0 if current_time.minute < 30 else 30), second=0, microsecond=0)
+        # Cắt giờ quá khứ bằng giờ VN
+        current_time_vn = get_vn_time()
+        rounded_now = current_time_vn.replace(minute=(0 if current_time_vn.minute < 30 else 30), second=0, microsecond=0)
 
         # -------------------------------------------------------------
         # THUẬT TOÁN WINDOW TIME KÉP (INBOUND = Cố định, OUTBOUND = 1/12)
@@ -484,7 +457,7 @@ with tab3:
         if dang_trong_khung: khung_gio_hoan_hao.append(f"{gio_bat_dau} đến 23:30")
 
         if len(khung_gio_hoan_hao) > 0:
-            st.markdown(f"<div class='safe-window'><strong>🎯 KẾT LUẬN (WINDOW TIME):</strong> Tàu có thể POB vừa đủ UKC vừa dòng chảy êm trong khoảng:<br><h3>" + " <br> ".join([f"🕒 {k}" for k in khung_gio_hoan_hao]) + "</h3></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='safe-window'><strong>🎯 KẾT LUẬN (CỬA SỔ VÀNG):</strong> Tàu có thể POB vừa đủ UKC vừa dòng chảy êm trong khoảng:<br><h3>" + " <br> ".join([f"🕒 {k}" for k in khung_gio_hoan_hao]) + "</h3></div>", unsafe_allow_html=True)
         else:
             st.markdown(f"<div class='unsafe-window'><strong>⚠️ KẾT LUẬN:</strong> Không có bất kỳ khung giờ nào hợp lệ đáp ứng đủ mớn nước HOẶC window time!</div>", unsafe_allow_html=True)
 
@@ -501,6 +474,44 @@ with tab3:
             st.dataframe(styled_kq, use_container_width=True, height=400)
         else:
             st.info("Không có mốc thời gian nào để hiển thị (đã qua hết giờ trong ngày).")
+
+    # BẢNG THỦY TRIỀU 3 NGÀY ĐƯỢC ĐẨY XUỐNG DƯỚI CÙNG
+    if extremes_data:
+        st.markdown("---")
+        col_y, col_t, col_tm = st.columns(3)
+        dates_to_show = [ngay_pob_t3 - timedelta(days=1), ngay_pob_t3, ngay_pob_t3 + timedelta(days=1)]
+        headers = ["Yesterday", "Today", "Tomorrow"]
+        cols_ui = [col_y, col_t, col_tm]
+
+        for i, d in enumerate(dates_to_show):
+            with cols_ui[i]:
+                day_ex = [e for e in extremes_data if e['dt'].date() == d]
+                st.markdown(f"<div class='tide-box'><strong>{headers[i]} ({d.strftime('%d/%m')})</strong><br>", unsafe_allow_html=True)
+                if day_ex:
+                    html_table = "<table class='tide-table'><tr><th>Phân loại</th><th>Vũng Tàu</th><th>Độ cao</th><th>Cát Lái</th><th>Mũi tên</th></tr>"
+                    for e in day_ex:
+                        if e['type'] == 'HW':
+                            lag = timedelta(hours=3, minutes=5)
+                            arrow = "↙"
+                            row_class = "hw-row" # HW = Xanh
+                        else:
+                            lvl = e['level']
+                            if lvl >= 1.5: lag = timedelta(hours=3, minutes=30)
+                            elif 1.0 <= lvl < 1.5: lag = timedelta(hours=3, minutes=35)
+                            elif 0.5 <= lvl < 1.0: lag = timedelta(hours=3, minutes=40)
+                            else: lag = timedelta(hours=3, minutes=45)
+                            arrow = "↗"
+                            row_class = "lw-row" # LW = Đỏ
+                            
+                        vt_time = e['dt'].strftime('%H:%M')
+                        cl_time = (e['dt'] + lag).strftime('%H:%M')
+                        
+                        html_table += f"<tr class='{row_class}'><td><b>{e['type']}</b></td><td>{vt_time}</td><td>{e['level']:.1f}m</td><td>{cl_time}</td><td>{arrow}</td></tr>"
+                    html_table += "</table>"
+                    st.markdown(html_table, unsafe_allow_html=True)
+                else:
+                    st.write("Không có dữ liệu")
+                st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
 # DISCLAIMER PHÁP LÝ CHUẨN QUỐC TẾ
