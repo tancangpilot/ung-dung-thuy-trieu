@@ -181,6 +181,9 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
 # KHỞI TẠO AI (Cập nhật để chống mọi lỗi 404)
 # ==========================================
 # Đổi tên hàm thành get_ai_bot để ép Streamlit xóa sạch cache cũ
+# ==========================================
+# KHỞI TẠO AI (ÉP CỨNG DÙNG BẢN MIỄN PHÍ FLASH)
+# ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
     genai.configure(api_key=api_key)
@@ -203,22 +206,10 @@ def get_ai_bot(_extremes_list, api_key):
     {almanac_str}
     """
     
-    # Lấy danh sách model thực tế từ API Key của bạn
-    valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    if not valid_models:
-        raise ValueError("API Key này không có quyền sử dụng bất kỳ mô hình nào!")
-        
-    # Chọn model khả dụng (ưu tiên 1.5-flash, không có thì lấy gemini-pro)
-    chosen_model = valid_models[0].replace('models/', '')
-    for m in valid_models:
-        if '1.5-flash' in m:
-            chosen_model = m.replace('models/', '')
-            break
-        elif 'gemini-pro' in m and 'vision' not in m:
-            chosen_model = m.replace('models/', '')
-            
-    # Khởi tạo model KHÔNG CÓ system_instruction để tránh lỗi tương thích
+    # ÉP CỨNG MODEL MIỄN PHÍ, KHÔNG CHO TỰ ĐỘNG CHỌN BẢN PRO
+    chosen_model = 'gemini-1.5-flash'
     model = genai.GenerativeModel(chosen_model)
+    
     return model, chosen_model, system_instruction
 
 # ==========================================
@@ -623,3 +614,4 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
+
