@@ -16,15 +16,16 @@ CHANNEL_DEPTHS = {
     'VL': 8.0, 'TCHP': 8.0, 'BB': 6.7
 }
 
+# ĐÃ CẬP NHẬT TÊN TUYẾN LUỒNG THEO FEEDBACK NGƯỜI DÙNG
 ROUTES = {
     "ĐI VÀO (INBOUND)": {
-        "INbound 01 P0VT – LÒNG TÀU – CÁT LÁI": {'HL27': 2.0, 'HL21': 2.5, 'HL6': 4.0},
-        "INbound 02 P0SR – SOÀI RẠP – TC HIỆP PHƯỚC": {'VL': 1.5, 'TCHP': 3.0}
+        "P0 Vũng Tàu - Lòng Tàu - Cát Lái": {'HL27': 2.0, 'HL21': 2.5, 'HL6': 4.0},
+        "P0 SR (H25) - Soài Rạp - TC Hiệp Phước": {'VL': 1.5, 'TCHP': 3.0}
     },
     "ĐI RA (OUTBOUND)": {
-        "OUTbound 01 CÁT LÁI – LÒNG TÀU – P0VT": {'HL6': 0.5, 'HL21': 2.0, 'HL27': 2.5},
-        "OUTbound 02 CÁT LÁI – SOÀI RẠP – P0SR": {'BB': 1.0, 'VL': 2.0},
-        "OUTbound 03 TC HIỆP PHƯỚC – SOÀI RẠP – P0SR": {'TCHP': 0.5, 'VL': 1.5}
+        "Cát Lái - Lòng Tàu - P0 Vũng Tàu": {'HL6': 0.5, 'HL21': 2.0, 'HL27': 2.5},
+        "Cát Lái - Soài Rạp (Bờ Băng) - P0 SR (H25)": {'BB': 1.0, 'VL': 2.0},
+        "TC Hiệp Phước - Soài Rạp (Vàm Láng) - P0 SR (H25)": {'TCHP': 0.5, 'VL': 1.5}
     }
 }
 
@@ -394,7 +395,8 @@ with tab3:
                 local_extremes = []
                 for ex in extremes_data:
                     lag = timedelta(hours=LAG_HIEPPHUOC_HOURS)
-                    if "CÁT LÁI" in tuyen_luong_t3:
+                    # Cập nhật nhận diện Tên Luồng Cát Lái
+                    if "CÁT LÁI" in tuyen_luong_t3.upper():
                         if ex['type'] == 'HW':
                             lag = timedelta(hours=3, minutes=5)
                         else:
@@ -539,6 +541,7 @@ with tab3:
                     html_table = "<table class='tide-table'><tr><th>Phân loại</th><th>Vũng Tàu</th><th>Độ cao</th><th>Cát Lái</th><th>Mũi tên</th></tr>"
                     for e in day_ex:
                         if e['type'] == 'HW':
+                            # Nhận diện trạm Cát Lái bằng cách check Tên Luồng (Tab 3)
                             lag = timedelta(hours=3, minutes=5)
                             arrow = "↙"
                             row_class = "hw-row"
@@ -550,6 +553,10 @@ with tab3:
                             else: lag = timedelta(hours=3, minutes=45)
                             arrow = "↗"
                             row_class = "lw-row"
+                            
+                        # Nếu đi TC Hiệp Phước thì Lag là 2.0 (theo logic cũ)
+                        if "Hiệp Phước" in tuyen_luong_t3:
+                            lag = timedelta(hours=LAG_HIEPPHUOC_HOURS)
                             
                         vt_time = e['dt'].strftime('%H:%M')
                         cl_time = (e['dt'] + lag).strftime('%H:%M')
