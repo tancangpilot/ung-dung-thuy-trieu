@@ -16,7 +16,7 @@ except ImportError:
 FILE_EXCEL = '06 tram HL6-HL21-HL27-BB-TCHP-VL-HLWVT 2026.xlsx'
 NAM_DU_LIEU = 2026
 
-# Lấy Key từ Két sắt bảo mật (Secrets)
+# Lấy Key từ Két sắt bảo mật (Secrets) của Streamlit
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
@@ -178,11 +178,7 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# KHỞI TẠO AI (Cập nhật để chống mọi lỗi 404)
-# ==========================================
-# Đổi tên hàm thành get_ai_bot để ép Streamlit xóa sạch cache cũ
-# ==========================================
-# KHỞI TẠO AI (ÉP CỨNG DÙNG BẢN MIỄN PHÍ FLASH)
+# KHỞI TẠO AI CHATBOT (ÉP CỨNG BẢN FLASH MIỄN PHÍ)
 # ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
@@ -206,10 +202,9 @@ def get_ai_bot(_extremes_list, api_key):
     {almanac_str}
     """
     
-    # ÉP CỨNG MODEL MIỄN PHÍ, KHÔNG CHO TỰ ĐỘNG CHỌN BẢN PRO
+    # Chốt cứng model miễn phí để tránh lỗi Quota 429
     chosen_model = 'gemini-1.5-flash'
     model = genai.GenerativeModel(chosen_model)
-    
     return model, chosen_model, system_instruction
 
 # ==========================================
@@ -573,12 +568,12 @@ with tab4:
         if "chat_session" not in st.session_state:
             with st.spinner("Đang kết nối hệ thống AI & Nạp dữ liệu thủy triều..."):
                 try:
-                    # GỌI HÀM VỚI TÊN MỚI (PHÁ CACHE CŨ)
+                    # GỌI HÀM VỚI TÊN MỚI (PHÁ CACHE CŨ) VÀ ÉP CỨNG GEMINI-1.5-FLASH
                     ai_model, model_name, sys_instruct = get_ai_bot(extremes_data, API_KEY)
                     
                     st.success(f"✅ Đã kết nối thành công với não bộ AI: **{model_name}**")
                     
-                    # NHỒI LUẬT HÀNG HẢI VÀO TIN NHẮN ĐẦU TIÊN THAY VÌ SYSTEM_INSTRUCTION ĐỂ CHỐNG LỖI 404
+                    # NHỒI LUẬT HÀNG HẢI VÀO TIN NHẮN ĐẦU TIÊN ĐỂ CHỐNG LỖI
                     st.session_state.chat_session = ai_model.start_chat(history=[
                         {"role": "user", "parts": [sys_instruct]},
                         {"role": "model", "parts": ["Đã rõ. Tôi đã nắm toàn bộ dữ liệu thủy triều 2026 và các quy tắc điều động tàu. Hãy đưa ra câu hỏi của bạn!"]}
@@ -593,7 +588,7 @@ with tab4:
                 with st.chat_message(role):
                     st.markdown(message.parts[0].text)
 
-            if user_prompt := st.chat_input("Nhập câu hỏi tại đây... (Ví dụ: Tàu ETA 07:00 ngày 25/3 mớn 10.7m...)"):
+            if user_prompt := st.chat_input("Nhập câu hỏi tại đây... (Ví dụ: Tàu ETA 07:00 ngày 25/3 mớn 10.7m đi Cát Lái...)"):
                 with st.chat_message("user"):
                     st.markdown(user_prompt)
                 
@@ -614,4 +609,3 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
-
