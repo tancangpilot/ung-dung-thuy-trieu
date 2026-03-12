@@ -15,7 +15,12 @@ except ImportError:
 # ==========================================
 FILE_EXCEL = '06 tram HL6-HL21-HL27-BB-TCHP-VL-HLWVT 2026.xlsx'
 NAM_DU_LIEU = 2026
-API_KEY = st.secrets["GEMINI_API_KEY"] # API Key của bạn
+
+# Lấy Key từ Két sắt bảo mật (Secrets)
+try:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+except:
+    API_KEY = ""
 
 LAG_HIEPPHUOC_HOURS = 2.0 
 
@@ -172,49 +177,49 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     except: return pd.DataFrame()
     return pd.DataFrame(danh_sach_dong)
 
-# Khởi tạo mô hình AI (Cache để không phải load lại dữ liệu nhiều lần)
+# ==========================================
+# KHỞI TẠO AI (Cập nhật để chống mọi lỗi 404)
+# ==========================================
+# Đổi tên hàm thành get_ai_bot để ép Streamlit xóa sạch cache cũ
 @st.cache_resource
-def get_ai_model(extremes_list):
-    genai.configure(api_key=API_KEY)
+def get_ai_bot(_extremes_list, api_key):
+    genai.configure(api_key=api_key)
     
-    # Ép toàn bộ 1400 mốc thủy triều vào não AI
-    almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in extremes_list]) if extremes_list else "Không có dữ liệu triều."
+    almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in _extremes_list]) if _extremes_list else "Không có dữ liệu triều."
 
     system_instruction = f"""
-    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot AI). Bạn là một chuyên gia điều động tàu giàu kinh nghiệm.
-    Nhiệm vụ: Tư vấn giờ điều động tàu (POB), tính toán mớn nước (UKC), và Window Time an toàn dựa trên câu hỏi của người dùng.
-
+    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot AI). Bạn là một chuyên gia điều động tàu.
     THÔNG SỐ BẮT BUỘC:
-    1. UKC (Khoảng sáng gầm tàu):
-       - Ban ngày (06:00 - 17:59): UKC = 7% mớn nước.
-       - Ban đêm (18:00 - 05:59): UKC = 10% mớn nước.
-       - Độ sâu yêu cầu = Mớn nước * (1 + UKC).
-    2. Độ sâu chuẩn các chokepoint (Luồng): HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), Vàm Láng (-8.0m), TC Hiệp Phước (-8.0m).
-    3. Thời gian hành trình INBOUND (Vào): Từ Vũng Tàu tới HL27 mất 2h, HL21 mất 2.5h, HL6 (Cát Lái) mất 4h.
-
+    1. UKC: Ban ngày 7%, Ban đêm 10%. Độ sâu yêu cầu = Mớn nước * (1 + UKC).
+    2. Độ sâu chuẩn (Luồng): HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), Vàm Láng (-8.0m), TC Hiệp Phước (-8.0m).
+    3. Thời gian INBOUND: Vũng Tàu tới HL27 (2h), HL21 (2.5h), HL6/Cát Lái (4h).
+    
     HƯỚNG DẪN TƯ VẤN:
-    - Khi người dùng hỏi (Ví dụ: "Tàu ETA 07:00 ngày 25/3 mớn 10.7m đi Cát Lái giờ nào an toàn?"):
-      + B1: Xác định ngày người dùng hỏi (trong năm 2026).
-      + B2: Tra cứu các mốc HW/LW của ngày đó trong Bảng dữ liệu Thủy triều bên dưới.
-      + B3: Tính yêu cầu độ sâu (UKC) cho mớn 10.7m. Đánh giá xem với độ sâu HL6 là 8.8m thì triều cần lên bao nhiêu mét mới qua được.
-      + B4: Nếu giờ người dùng đề xuất rơi vào lúc triều ròng (LW) thì Báo KHÔNG AN TOÀN. 
-      + B5: Tự động nhìn vào bảng triều để TÌM GIỜ ĐỀ XUẤT thay thế. Trả lời mạch lạc, dễ hiểu, chuyên nghiệp theo văn phong Hàng hải.
-
-    DỮ LIỆU THỦY TRIỀU VŨNG TÀU NĂM 2026 (Làm cơ sở tra cứu):
+    - B1: Xác định ngày người dùng hỏi.
+    - B2: Tra cứu Bảng Thủy triều bên dưới. Tính yêu cầu độ sâu (UKC). Đánh giá xem có lọt mớn không.
+    - B3: Nếu giờ đề xuất báo KHÔNG AN TOÀN, hãy tự động TÌM GIỜ ĐỀ XUẤT thay thế an toàn gần nhất.
+    
+    DỮ LIỆU THỦY TRIỀU VŨNG TÀU 2026:
     {almanac_str}
     """
     
-    # --- THUẬT TOÁN TỰ ĐỘNG BẮT MODEL (CHỐNG LỖI 404) ---
-    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    
-    chosen_model = 'gemini-1.5-flash' # Mặc định
-    for m in available_models:
-        if 'gemini-1.5-flash' in m:
+    # Lấy danh sách model thực tế từ API Key của bạn
+    valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    if not valid_models:
+        raise ValueError("API Key này không có quyền sử dụng bất kỳ mô hình nào!")
+        
+    # Chọn model khả dụng (ưu tiên 1.5-flash, không có thì lấy gemini-pro)
+    chosen_model = valid_models[0].replace('models/', '')
+    for m in valid_models:
+        if '1.5-flash' in m:
             chosen_model = m.replace('models/', '')
             break
+        elif 'gemini-pro' in m and 'vision' not in m:
+            chosen_model = m.replace('models/', '')
             
-    model = genai.GenerativeModel(chosen_model, system_instruction=system_instruction)
-    return model
+    # Khởi tạo model KHÔNG CÓ system_instruction để tránh lỗi tương thích
+    model = genai.GenerativeModel(chosen_model)
+    return model, chosen_model, system_instruction
 
 # ==========================================
 # GIAO DIỆN WEB (UI)
@@ -226,36 +231,24 @@ st.markdown("""
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
     .stButton>button { min-height: 55px; font-weight: bold; border-radius: 8px; margin-top: 15px; }
     .footer { text-align: justify; color: gray; font-size: 0.85em; margin-top: 60px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 20px; }
-    
     .safe-window { background-color: rgba(46, 160, 67, 0.15); border-left: 5px solid #2ea043; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .warn-window { background-color: rgba(212, 167, 44, 0.15); border-left: 5px solid #d4a72c; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .unsafe-window { background-color: rgba(207, 34, 46, 0.15); border-left: 5px solid #cf222e; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
-    
     .tide-box { background-color: rgba(128, 128, 128, 0.05); padding: 10px; border-radius: 8px; text-align: center; border: 1px solid rgba(128, 128, 128, 0.2); }
     .tide-table { width: 100%; text-align: center; font-size: 0.9em; border-collapse: collapse; margin-top: 10px; }
     .tide-table th { font-weight: bold; border-bottom: 1px solid rgba(128, 128, 128, 0.3); padding-bottom: 5px; opacity: 0.8; }
     .tide-table td { padding: 4px 0; border-bottom: 1px dashed rgba(128, 128, 128, 0.1); }
-    
     .hw-row { background-color: rgba(0, 153, 255, 0.15); font-weight: bold; color: #0099ff; }
     .lw-row { background-color: rgba(255, 75, 75, 0.15); font-weight: bold; color: #ff4b4b; }
-    
     div.row-widget.stRadio > div{ flex-direction:row; }
-    
-    /* ÉP LABEL WIDGET NẰM NGANG */
     [data-testid="stNumberInput"], [data-testid="stDateInput"], [data-testid="stTimeInput"], 
-    [data-testid="stSelectbox"], [data-testid="stMultiSelect"] {
-        display: flex; flex-direction: row; align-items: center;
-    }
+    [data-testid="stSelectbox"], [data-testid="stMultiSelect"] { display: flex; flex-direction: row; align-items: center; }
     [data-testid="stNumberInput"] > label, [data-testid="stDateInput"] > label, 
     [data-testid="stTimeInput"] > label, [data-testid="stSelectbox"] > label, 
-    [data-testid="stMultiSelect"] > label {
-        width: 100px !important; min-width: 100px !important; margin-bottom: 0px !important; margin-right: 15px; display: flex; align-items: center;
-    }
+    [data-testid="stMultiSelect"] > label { width: 100px !important; min-width: 100px !important; margin-bottom: 0px !important; margin-right: 15px; display: flex; align-items: center; }
     [data-testid="stNumberInput"] > div, [data-testid="stDateInput"] > div, 
     [data-testid="stTimeInput"] > div, [data-testid="stSelectbox"] > div, [data-testid="stMultiSelect"] > div { flex: 1; }
     [data-testid="stCheckbox"] { display: flex; align-items: center; padding-top: 8px; }
-    
-    /* Căn chỉnh riêng cho Chat UI */
     .stChatMessage { border-radius: 10px; padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
@@ -276,7 +269,6 @@ extremes_data = load_extremes_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-# ĐÃ THÊM TAB 4: TRỢ LÝ AI
 tab1, tab2, tab3, tab4 = st.tabs(["🚀 POB and Draft", "📅 Max Draft Table", "⏱️ Draft for POB", "🤖 Trợ lý AI"])
 
 # ----------------- TAB 1: POB AND DRAFT -----------------
@@ -383,9 +375,6 @@ with tab3:
         current_time_vn = get_vn_time()
         rounded_now = current_time_vn.replace(minute=(0 if current_time_vn.minute < 30 else 30), second=0, microsecond=0)
 
-        # -------------------------------------------------------------
-        # THUẬT TOÁN WINDOW TIME KÉP (INBOUND = Cố định, OUTBOUND = 1/12)
-        # -------------------------------------------------------------
         local_windows = []
         if extremes_data and len(extremes_data) >= 3:
             if huong_di_t3 == "ĐI VÀO (INBOUND)":
@@ -454,9 +443,6 @@ with tab3:
                         'end': end_dt
                     })
 
-        # -------------------------------------------------------------
-        # QUÉT GIỜ POB VÀ ĐỐI CHIẾU WINDOW
-        # -------------------------------------------------------------
         ket_qua = []
         khung_gio_hoan_hao = []
         dang_trong_khung = False
@@ -588,37 +574,41 @@ with tab3:
 
 # ----------------- TAB 4: TRỢ LÝ AI (CHATBOT) -----------------
 with tab4:
-    if not HAS_AI:
-        st.error("⚠️ Lỗi: Chưa cài đặt thư viện AI. Vui lòng thêm `google-generativeai` vào file `requirements.txt` trên hệ thống máy chủ/Hugging Face.")
+    if not HAS_AI or not API_KEY:
+        st.error("⚠️ Lỗi: Chưa cấu hình đúng thư viện AI hoặc mất kết nối tới API Key (Két sắt Secrets).")
     else:
         st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
-        st.info("💡 Bạn có thể hỏi bằng ngôn ngữ tự nhiên. Ví dụ: *'Tàu ETA 07:00 ngày 25/03 mớn 10.7m đi Cát Lái giờ nào an toàn?'*")
-
-        # Khởi tạo hoặc lấy lịch sử chat
+        
         if "chat_session" not in st.session_state:
-            with st.spinner("Đang kết nối hệ thống AI & Nạp dữ liệu thủy triều 2026..."):
+            with st.spinner("Đang kết nối hệ thống AI & Nạp dữ liệu thủy triều..."):
                 try:
-                    ai_model = get_ai_model(extremes_data)
-                    st.session_state.chat_session = ai_model.start_chat(history=[])
+                    # GỌI HÀM VỚI TÊN MỚI (PHÁ CACHE CŨ)
+                    ai_model, model_name, sys_instruct = get_ai_bot(extremes_data, API_KEY)
+                    
+                    st.success(f"✅ Đã kết nối thành công với não bộ AI: **{model_name}**")
+                    
+                    # NHỒI LUẬT HÀNG HẢI VÀO TIN NHẮN ĐẦU TIÊN THAY VÌ SYSTEM_INSTRUCTION ĐỂ CHỐNG LỖI 404
+                    st.session_state.chat_session = ai_model.start_chat(history=[
+                        {"role": "user", "parts": [sys_instruct]},
+                        {"role": "model", "parts": ["Đã rõ. Tôi đã nắm toàn bộ dữ liệu thủy triều 2026 và các quy tắc điều động tàu. Hãy đưa ra câu hỏi của bạn!"]}
+                    ])
                 except Exception as e:
                     st.error(f"Lỗi khởi tạo AI: {e}")
 
-        # Hiển thị tin nhắn cũ
         if "chat_session" in st.session_state:
-            for message in st.session_state.chat_session.history:
+            # Bỏ qua 2 tin nhắn hệ thống đầu tiên (index 0 và 1) không in ra màn hình
+            for message in st.session_state.chat_session.history[2:]:
                 role = "user" if message.role == "user" else "assistant"
                 with st.chat_message(role):
                     st.markdown(message.parts[0].text)
 
-            # Khung nhập liệu
-            if user_prompt := st.chat_input("Nhập câu hỏi tại đây..."):
+            if user_prompt := st.chat_input("Nhập câu hỏi tại đây... (Ví dụ: Tàu ETA 07:00 ngày 25/3 mớn 10.7m...)"):
                 with st.chat_message("user"):
                     st.markdown(user_prompt)
                 
                 with st.chat_message("assistant"):
                     with st.spinner("AI đang phân tích luồng và tính toán thủy triều..."):
                         try:
-                            # Gửi câu hỏi lên Gemini
                             response = st.session_state.chat_session.send_message(user_prompt)
                             st.markdown(response.text)
                         except Exception as e:
@@ -633,7 +623,3 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
-
-
-
-
