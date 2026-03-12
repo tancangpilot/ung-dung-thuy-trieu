@@ -178,7 +178,7 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# KHỞI TẠO AI CHATBOT (LƯỚI LỌC & ÉP TRẢ LỜI NGẮN)
+# KHỞI TẠO AI CHATBOT (CẬP NHẬT CẤU TRÚC TRẢ LỜI)
 # ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
@@ -186,22 +186,20 @@ def get_ai_bot(_extremes_list, api_key):
     
     almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in _extremes_list]) if _extremes_list else "Không có dữ liệu triều."
 
-    # LỆNH ĐIỀU KHIỂN AI MỚI: Ép trả lời cực ngắn, không phân tích dài
+    # Lệnh điều khiển AI: Trả lời theo form chuẩn 3 bước
     system_instruction = f"""
-    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). Bạn là người ra quyết định chuyên nghiệp.
+    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). 
     
-    QUY TẮC TRẢ LỜI ĐẶC BIỆT QUAN TRỌNG:
-    - BẮT BUỘC TRẢ LỜI CỰC KỲ NGẮN GỌN, TRỰC TIẾP VÀO KẾT QUẢ.
-    - KHÔNG giải thích dài dòng thuật toán, KHÔNG phân tích từng bước tính toán.
-    - Văn phong: Dứt khoát, rõ ràng như giao tiếp trên bộ đàm VHF.
-    - Cấu trúc trả lời chuẩn: 
-        1. Đánh giá giờ KH yêu cầu: [An Toàn / Không An Toàn]. Lọt mớn hay cạn.
-        2. Chốt giờ POB đề xuất: [Khung giờ an toàn nhất].
-    
-    THÔNG SỐ NỀN:
+    THÔNG SỐ BẮT BUỘC:
     1. UKC: Ngày 7%, Đêm 10%. Độ sâu = Mớn * (1 + UKC).
-    2. Độ sâu chuẩn: HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), VL (-8.0m), TCHP (-8.0m).
-    3. Hành trình INBOUND: VT tới HL27(2h), HL21(2.5h), HL6(4h).
+    2. Độ sâu chuẩn (Luồng): HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), Bờ Băng (-6.7m), Vàm Láng (-8.0m), TC Hiệp Phước (-8.0m).
+    
+    CẤU TRÚC BÁO CÁO (BẮT BUỘC TRẢ LỜI ĐÚNG 3 GẠCH ĐẦU DÒNG NÀY, KHÔNG DÀI DÒNG):
+    - Tuyến luồng: [Tên tuyến và các điểm cạn sẽ đi qua, ví dụ: Cát Lái - Soài Rạp qua Bờ Băng, Vàm Láng].
+    - Đánh giá mớn: Mớn [X]m + UKC cần độ sâu [Y]m. [Lọt / Cạn].
+    - Chốt giờ POB: [Khung giờ an toàn đề xuất].
+    
+    Tuyệt đối không giải thích thuật toán, không nói luyên thuyên. Tác phong dứt khoát như bộ đàm VHF.
     
     DỮ LIỆU THỦY TRIỀU VŨNG TÀU 2026:
     {almanac_str}
@@ -278,24 +276,22 @@ extremes_data = load_extremes_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-# ĐÃ SẮP XẾP LẠI THỨ TỰ TAB: TRỢ LÝ AI LÊN ĐẦU TIÊN
 tab_ai, tab_pob_draft, tab_max_draft, tab_draft_pob = st.tabs(["🤖 Trợ lý AI", "🚀 POB and Draft", "📅 Max Draft Table", "⏱️ Draft for POB"])
 
-# ----------------- TAB 1: TRỢ LÝ AI (ĐÃ ĐƯỢC ĐẨY LÊN ĐẦU) -----------------
+# ----------------- TAB 1: TRỢ LÝ AI -----------------
 with tab_ai:
     if not HAS_AI or not API_KEY:
         st.error("⚠️ Lỗi: Chưa cấu hình đúng thư viện AI hoặc mất kết nối tới API Key (Két sắt Secrets).")
     else:
         st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
         
-        # Bảng gợi ý đặt câu hỏi trực quan
         st.markdown("""
         <div style="background-color: rgba(0, 153, 255, 0.1); padding: 15px; border-radius: 8px; border-left: 4px solid #0099ff; margin-bottom: 20px;">
             <strong>💡 MẪU CÂU HỎI NHANH:</strong><br>
             <i>Hãy gõ câu hỏi theo ý bạn, AI sẽ tính toán ngay lập tức:</i>
             <ul style="margin-top: 5px; margin-bottom: 0px;">
                 <li>"Tàu ETA 07:00 ngày 25/03, mớn 10.7m, đi Cát Lái. Giờ nào an toàn?"</li>
-                <li>"Ngày 15/4 mớn 9.5m đi TC Hiệp Phước có lọt không?"</li>
+                <li>"Mớn 9.8m ngày 13/3 mấy giờ đi từ Cát Lái ra H25 được?"</li>
                 <li>"Tìm giờ POB tốt nhất cho tàu mớn 11m Inbound Cát Lái ngày 2/5."</li>
             </ul>
         </div>
@@ -308,7 +304,7 @@ with tab_ai:
                     
                     st.session_state.chat_session = ai_model.start_chat(history=[
                         {"role": "user", "parts": [sys_instruct]},
-                        {"role": "model", "parts": ["Đã rõ. Tôi sẽ báo cáo cực kỳ ngắn gọn, chốt ngay kết quả lọt/cạn và khung giờ an toàn, không phân tích dài dòng."]}
+                        {"role": "model", "parts": ["Đã rõ. Tôi sẽ báo cáo cực kỳ ngắn gọn, chốt ngay kết quả lọt/cạn và khung giờ an toàn theo 3 ý bắt buộc, không phân tích dài dòng."]}
                     ])
                 except Exception as e:
                     st.error(f"Lỗi khởi tạo AI: {e}")
