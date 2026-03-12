@@ -195,7 +195,6 @@ st.markdown("""
     .hw-row { background-color: rgba(0, 153, 255, 0.15); font-weight: bold; color: #0099ff; }
     .lw-row { background-color: rgba(255, 75, 75, 0.15); font-weight: bold; color: #ff4b4b; }
     
-    /* Tùy chỉnh khoảng cách cho Radio Button để dễ chạm trên mobile */
     div.row-widget.stRadio > div{ flex-direction:row; }
 </style>
 """, unsafe_allow_html=True)
@@ -230,7 +229,6 @@ with tab1:
         gio_pob = st.time_input("Giờ POB", gio_mac_dinh, key="t1_gio")
     with col2:
         huong_di = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t1_huong")
-        # Chuyển tuyến luồng sang Radio (xếp dọc mặc định để dễ đọc chữ dài)
         tuyen_luong = st.radio("Tuyến luồng (Route)", list(ROUTES[huong_di].keys()), key="t1_tuyen")
 
     if st.button("🚀 KIỂM TRA ĐIỀU KIỆN AN TOÀN", use_container_width=True, key="btn_t1"):
@@ -258,15 +256,27 @@ with tab2:
     with col_th: thang_ch = st.selectbox("📅 Tháng", list(range(1, 13)), bay_gio_t2.month - 1)
     with col_ck: 
         st.write(""); show_old = st.checkbox("Hiện ngày đã qua", value=False)
-    with col_tu: tu_sel = st.selectbox("🔍 Lọc bảng:", ["1. Hiển thị tất cả", "2. P0VT – CÁT LÁI", "3. P0SR – TC HIỆP PHƯỚC", "4. CÁT LÁI – P0SR"])
+    
+    with col_tu: 
+        # Sử dụng multiselect ẩn tiêu đề, cho phép chọn nhiều trạm linh hoạt
+        diem_options = ['HL6', 'HL21', 'HL27', 'Vàm Láng', 'TC Hiệp Phước', 'Bờ Băng']
+        tu_sel = st.multiselect("Lọc điểm", diem_options, default=['HL6', 'HL27'], label_visibility="collapsed")
 
     bang_raw = tao_bang_mon_nuoc_toi_da(data_dict, thang_ch)
     if not bang_raw.empty:
         df_f = bang_raw.copy()
         if thang_ch == bay_gio_t2.month and not show_old: df_f = df_f[df_f['Ngay_Goc'] >= bay_gio_t2.day]
-        if "2." in tu_sel: df_f = df_f[df_f['Điểm'].isin(['HL27','HL21','HL6'])]
-        elif "3." in tu_sel: df_f = df_f[df_f['Điểm'].isin(['VL','TCHP'])]
-        elif "4." in tu_sel: df_f = df_f[df_f['Điểm'].isin(['BB','VL'])]
+        
+        # Ánh xạ tên rút gọn trong dữ liệu gốc thành tên Tiếng Việt đầy đủ
+        rev_map = {'HL6': 'HL6', 'HL21': 'HL21', 'HL27': 'HL27', 'VL': 'Vàm Láng', 'TCHP': 'TC Hiệp Phước', 'BB': 'Bờ Băng'}
+        df_f['Điểm'] = df_f['Điểm'].map(rev_map)
+        
+        # Chỉ giữ lại các trạm mà người dùng đã chọn trong hộp Multiselect
+        if tu_sel:
+            df_f = df_f[df_f['Điểm'].isin(tu_sel)]
+        else:
+            # Nếu người dùng xóa hết chọn lọc, hiển thị bảng trống
+            df_f = df_f[df_f['Điểm'].isin([])]
 
         ngay_list = df_f['Ngày'].tolist()
         new_ngay = []
@@ -275,21 +285,26 @@ with tab2:
             if d != last_d: new_ngay.append(d); last_d = d
             else: new_ngay.append(h_char * global_cnt); global_cnt += 1
         df_f['Ngày'] = new_ngay
-        df_disp = df_f.drop(columns=['Ngay_Goc']).set_index(['Ngày', 'Điểm'])
+        
+        if not df_f.empty:
+            df_disp = df_f.drop(columns=['Ngay_Goc']).set_index(['Ngày', 'Điểm'])
 
-        def apply_st(df):
-            stys = pd.DataFrame('', index=df.index, columns=df.columns)
-            for i in range(len(df)):
-                if "Sun" in ngay_list[i]: stys.iloc[i, :] = 'background-color: rgba(255, 75, 75, 0.15); color: #ff4b4b; font-weight: bold;'
-            return stys
-        def style_idx(val):
-            if val in ['HL6','HL21','HL27']: return 'color: #33ccff; font-weight: bold;'
-            if val in ['VL','BB','TCHP']: return 'color: #ff9933; font-weight: bold;'
-            return 'font-weight: bold;'
-            
-        styled_df = df_disp.style.apply(apply_st, axis=None).map_index(style_idx, axis=0)
-        st.dataframe(styled_df, use_container_width=True, height=600)
-        st.download_button("📥 Tải Bảng (CSV)", df_f.drop(columns=['Ngay_Goc']).to_csv(index=False, encoding='utf-8-sig'), f"Tide_{thang_ch}.csv", "text/csv")
+            def apply_st(df):
+                stys = pd.DataFrame('', index=df.index, columns=df.columns)
+                for i in range(len(df)):
+                    if "Sun" in ngay_list[i]: stys.iloc[i, :] = 'background-color: rgba(255, 75, 75, 0.15); color: #ff4b4b; font-weight: bold;'
+                return stys
+                
+            def style_idx(val):
+                if val in ['HL6','HL21','HL27']: return 'color: #33ccff; font-weight: bold;'
+                if val in ['Vàm Láng','Bờ Băng','TC Hiệp Phước']: return 'color: #ff9933; font-weight: bold;'
+                return 'font-weight: bold;'
+                
+            styled_df = df_disp.style.apply(apply_st, axis=None).map_index(style_idx, axis=0)
+            st.dataframe(styled_df, use_container_width=True, height=600)
+            st.download_button("📥 Tải Bảng (CSV)", df_f.drop(columns=['Ngay_Goc']).to_csv(index=False, encoding='utf-8-sig'), f"Tide_{thang_ch}.csv", "text/csv")
+        else:
+            st.info("Vui lòng chọn ít nhất một điểm để hiển thị dữ liệu.")
 
 # ----------------- TAB 3: DRAFT FOR POB -----------------
 with tab3:
@@ -301,7 +316,6 @@ with tab3:
         ngay_pob_t3 = st.date_input("Ngày dự kiến POB", bay_gio_t3.date(), format="DD/MM/YYYY", key="t3_ngay")
     with col3_2:
         huong_di_t3 = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t3_huong")
-        # Chuyển tuyến luồng sang Radio
         tuyen_luong_t3 = st.radio("Tuyến luồng (Route)", list(ROUTES[huong_di_t3].keys()), key="t3_tuyen")
 
     if st.button("⏱️ QUÉT TÌM GIỜ CHẠY TÀU", use_container_width=True, key="btn_t3"):
