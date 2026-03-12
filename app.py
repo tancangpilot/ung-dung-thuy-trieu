@@ -180,6 +180,9 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
 # ==========================================
 # KHỞI TẠO AI CHATBOT (TỰ ĐỘNG SĂN TÌM BẢN FLASH MIỄN PHÍ)
 # ==========================================
+# ==========================================
+# KHỞI TẠO AI CHATBOT (LƯỚI LỌC MODEL CHUẨN)
+# ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
     genai.configure(api_key=api_key)
@@ -203,24 +206,33 @@ def get_ai_bot(_extremes_list, api_key):
     """
     
     try:
-        # Lấy danh sách toàn bộ model thực tế mà API Key này được phép dùng
+        # 1. Lấy tất cả model được phép dùng
         valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Lọc ra CHỈ các model thuộc dòng 'flash' (miễn phí, hạn mức cao)
-        flash_models = [m for m in valid_models if 'flash' in m.lower()]
+        # 2. BỘ LỌC THÉP: Loại bỏ ngay các model rác chuyên xử lý ảnh/video (Gây lỗi Limit 0)
+        clean_models = [m for m in valid_models if 'image' not in m.lower() and 'vision' not in m.lower() and 'preview' not in m.lower()]
         
-        if flash_models:
-            # Ưu tiên lấy bản Flash mới nhất trong danh sách
-            chosen_model = flash_models[-1].replace('models/', '')
-        elif valid_models:
-            # Nếu xui xẻo không có flash, lấy tạm một bản bất kỳ không phải 'pro'
-            non_pro = [m for m in valid_models if 'pro' not in m.lower()]
-            chosen_model = non_pro[0].replace('models/', '') if non_pro else valid_models[0].replace('models/', '')
-        else:
-            chosen_model = 'gemini-flash' # Cứu cánh cuối cùng
+        chosen_model = None
+        
+        # 3. Ưu tiên số 1: Bắt đích danh bản 1.5-flash (Bản ổn định và thông minh nhất cho Text)
+        for m in clean_models:
+            if 'gemini-1.5-flash' in m.lower() and '8b' not in m.lower():
+                chosen_model = m.replace('models/', '')
+                break
+                
+        # 4. Nếu không có, tìm bản flash bất kỳ nhưng phải là bản sạch (Text)
+        if not chosen_model:
+            for m in clean_models:
+                if 'flash' in m.lower():
+                    chosen_model = m.replace('models/', '')
+                    break
+                    
+        # 5. Cứu cánh cuối cùng
+        if not chosen_model:
+            chosen_model = clean_models[0].replace('models/', '') if clean_models else 'gemini-1.5-flash'
             
     except Exception as e:
-        chosen_model = 'gemini-flash'
+        chosen_model = 'gemini-1.5-flash'
         
     model = genai.GenerativeModel(chosen_model)
     return model, chosen_model, system_instruction
@@ -627,4 +639,5 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
+
 
