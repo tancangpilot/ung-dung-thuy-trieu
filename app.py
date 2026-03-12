@@ -180,26 +180,38 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
 # ==========================================
 # KHỞI TẠO AI CHATBOT (CẬP NHẬT CẤU TRÚC TRẢ LỜI)
 # ==========================================
+# ==========================================
+# KHỞI TẠO AI CHATBOT (ĐỊNH NGHĨA LẠI KHÁI NIỆM LUỒNG TUYẾN)
+# ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
     genai.configure(api_key=api_key)
     
     almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in _extremes_list]) if _extremes_list else "Không có dữ liệu triều."
 
-    # Lệnh điều khiển AI: Trả lời theo form chuẩn 3 bước
+    # LỆNH ĐIỀU KHIỂN AI MỚI: Dạy lại môn Địa lý Hàng hải & Ép trả lời ngắn
     system_instruction = f"""
-    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). 
+    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). Bạn là người ra quyết định chuyên nghiệp.
     
+    ĐỊNH NGHĨA TUYẾN LUỒNG & CHOKEPOINT (TUYỆT ĐỐI TUÂN THỦ KHÔNG ĐƯỢC NHẦM LẪN):
+    1. ĐI VÀO (INBOUND):
+       - "P0 Vũng Tàu - Lòng Tàu - Cát Lái": Qua Dần Xây/HL27 (sau 2h), L'est/HL21 (sau 2.5h), Đèn Đỏ/HL6 (sau 4h). Tuyệt đối KHÔNG liên quan đến Hiệp Phước.
+       - "P0 SR (H25) - Soài Rạp - TC Hiệp Phước": Qua Vàm Láng/VL (sau 1.5h), TC Hiệp Phước/TCHP (sau 3h).
+    2. ĐI RA (OUTBOUND):
+       - "Cát Lái - Lòng Tàu - P0 Vũng Tàu": Qua HL6 (sau 0.5h), HL21 (sau 2h), HL27 (sau 2.5h).
+       - "Cát Lái - Soài Rạp (Bờ Băng) - P0 SR (H25)": Qua Bờ Băng/BB (sau 1h), Vàm Láng/VL (sau 2h).
+       - "TC Hiệp Phước - Soài Rạp (Vàm Láng) - P0 SR (H25)": Qua TCHP (sau 0.5h), Vàm Láng/VL (sau 1.5h).
+
     THÔNG SỐ BẮT BUỘC:
-    1. UKC: Ngày 7%, Đêm 10%. Độ sâu = Mớn * (1 + UKC).
-    2. Độ sâu chuẩn (Luồng): HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), Bờ Băng (-6.7m), Vàm Láng (-8.0m), TC Hiệp Phước (-8.0m).
+    1. Độ sâu chuẩn: HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), BB (-6.7m), VL (-8.0m), TCHP (-8.0m).
+    2. UKC (Khoảng sáng gầm tàu): Ngày 7%, Đêm 10%. Độ sâu yêu cầu = Mớn * (1 + UKC).
     
-    CẤU TRÚC BÁO CÁO (BẮT BUỘC TRẢ LỜI ĐÚNG 3 GẠCH ĐẦU DÒNG NÀY, KHÔNG DÀI DÒNG):
-    - Tuyến luồng: [Tên tuyến và các điểm cạn sẽ đi qua, ví dụ: Cát Lái - Soài Rạp qua Bờ Băng, Vàm Láng].
-    - Đánh giá mớn: Mớn [X]m + UKC cần độ sâu [Y]m. [Lọt / Cạn].
-    - Chốt giờ POB: [Khung giờ an toàn đề xuất].
+    CẤU TRÚC BÁO CÁO (BẮT BUỘC ĐÚNG 3 GẠCH ĐẦU DÒNG, DỨT KHOÁT NHƯ BỘ ĐÀM VHF):
+    - Tuyến luồng: [Đọc đúng Tên tuyến và các điểm cạn theo định nghĩa trên].
+    - Đánh giá mớn: Mớn [X]m + UKC cần độ sâu [Y]m. Đánh giá [Lọt / Cạn].
+    - Chốt giờ POB: [Khung giờ an toàn đề xuất từ ... đến ...].
     
-    Tuyệt đối không giải thích thuật toán, không nói luyên thuyên. Tác phong dứt khoát như bộ đàm VHF.
+    Tuyệt đối không giải thích thuật toán, không nói luyên thuyên. 
     
     DỮ LIỆU THỦY TRIỀU VŨNG TÀU 2026:
     {almanac_str}
@@ -225,6 +237,7 @@ def get_ai_bot(_extremes_list, api_key):
     except Exception as e:
         chosen_model = 'gemini-1.5-flash'
         
+    # Đổi tên cache key bằng cách thêm _v2 để ép Streamlit quên lệnh cũ đi
     model = genai.GenerativeModel(chosen_model)
     return model, chosen_model, system_instruction
 
@@ -637,3 +650,4 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
+
