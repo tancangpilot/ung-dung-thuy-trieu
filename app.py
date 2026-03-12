@@ -15,7 +15,7 @@ except ImportError:
 # ==========================================
 FILE_EXCEL = '06 tram HL6-HL21-HL27-BB-TCHP-VL-HLWVT 2026.xlsx'
 NAM_DU_LIEU = 2026
-API_KEY = "AIzaSyAwp0ID485bMSrb01yci9VAHs2wHbou6c8" # API Key của bạn
+API_KEY = st.secrets["GEMINI_API_KEY"] # API Key của bạn
 
 LAG_HIEPPHUOC_HOURS = 2.0 
 
@@ -633,6 +633,7 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
