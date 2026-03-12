@@ -178,10 +178,7 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# KHỞI TẠO AI CHATBOT (TỰ ĐỘNG SĂN TÌM BẢN FLASH MIỄN PHÍ)
-# ==========================================
-# ==========================================
-# KHỞI TẠO AI CHATBOT (LƯỚI LỌC MODEL CHUẨN)
+# KHỞI TẠO AI CHATBOT (LƯỚI LỌC & ÉP TRẢ LỜI NGẮN)
 # ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
@@ -189,45 +186,41 @@ def get_ai_bot(_extremes_list, api_key):
     
     almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in _extremes_list]) if _extremes_list else "Không có dữ liệu triều."
 
+    # LỆNH ĐIỀU KHIỂN AI MỚI: Ép trả lời cực ngắn, không phân tích dài
     system_instruction = f"""
-    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot AI). Bạn là một chuyên gia điều động tàu.
-    THÔNG SỐ BẮT BUỘC:
-    1. UKC: Ban ngày 7%, Ban đêm 10%. Độ sâu yêu cầu = Mớn nước * (1 + UKC).
-    2. Độ sâu chuẩn (Luồng): HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), Vàm Láng (-8.0m), TC Hiệp Phước (-8.0m).
-    3. Thời gian INBOUND: Vũng Tàu tới HL27 (2h), HL21 (2.5h), HL6/Cát Lái (4h).
+    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). Bạn là người ra quyết định chuyên nghiệp.
     
-    HƯỚNG DẪN TƯ VẤN:
-    - B1: Xác định ngày người dùng hỏi.
-    - B2: Tra cứu Bảng Thủy triều bên dưới. Tính yêu cầu độ sâu (UKC). Đánh giá xem có lọt mớn không.
-    - B3: Nếu giờ đề xuất báo KHÔNG AN TOÀN, hãy tự động TÌM GIỜ ĐỀ XUẤT thay thế an toàn gần nhất.
+    QUY TẮC TRẢ LỜI ĐẶC BIỆT QUAN TRỌNG:
+    - BẮT BUỘC TRẢ LỜI CỰC KỲ NGẮN GỌN, TRỰC TIẾP VÀO KẾT QUẢ.
+    - KHÔNG giải thích dài dòng thuật toán, KHÔNG phân tích từng bước tính toán.
+    - Văn phong: Dứt khoát, rõ ràng như giao tiếp trên bộ đàm VHF.
+    - Cấu trúc trả lời chuẩn: 
+        1. Đánh giá giờ KH yêu cầu: [An Toàn / Không An Toàn]. Lọt mớn hay cạn.
+        2. Chốt giờ POB đề xuất: [Khung giờ an toàn nhất].
+    
+    THÔNG SỐ NỀN:
+    1. UKC: Ngày 7%, Đêm 10%. Độ sâu = Mớn * (1 + UKC).
+    2. Độ sâu chuẩn: HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), VL (-8.0m), TCHP (-8.0m).
+    3. Hành trình INBOUND: VT tới HL27(2h), HL21(2.5h), HL6(4h).
     
     DỮ LIỆU THỦY TRIỀU VŨNG TÀU 2026:
     {almanac_str}
     """
     
     try:
-        # 1. Lấy tất cả model được phép dùng
         valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 2. BỘ LỌC THÉP: Loại bỏ ngay các model rác chuyên xử lý ảnh/video (Gây lỗi Limit 0)
         clean_models = [m for m in valid_models if 'image' not in m.lower() and 'vision' not in m.lower() and 'preview' not in m.lower()]
         
         chosen_model = None
-        
-        # 3. Ưu tiên số 1: Bắt đích danh bản 1.5-flash (Bản ổn định và thông minh nhất cho Text)
         for m in clean_models:
             if 'gemini-1.5-flash' in m.lower() and '8b' not in m.lower():
                 chosen_model = m.replace('models/', '')
                 break
-                
-        # 4. Nếu không có, tìm bản flash bất kỳ nhưng phải là bản sạch (Text)
         if not chosen_model:
             for m in clean_models:
                 if 'flash' in m.lower():
                     chosen_model = m.replace('models/', '')
                     break
-                    
-        # 5. Cứu cánh cuối cùng
         if not chosen_model:
             chosen_model = clean_models[0].replace('models/', '') if clean_models else 'gemini-1.5-flash'
             
@@ -285,10 +278,61 @@ extremes_data = load_extremes_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["🚀 POB and Draft", "📅 Max Draft Table", "⏱️ Draft for POB", "🤖 Trợ lý AI"])
+# ĐÃ SẮP XẾP LẠI THỨ TỰ TAB: TRỢ LÝ AI LÊN ĐẦU TIÊN
+tab_ai, tab_pob_draft, tab_max_draft, tab_draft_pob = st.tabs(["🤖 Trợ lý AI", "🚀 POB and Draft", "📅 Max Draft Table", "⏱️ Draft for POB"])
 
-# ----------------- TAB 1: POB AND DRAFT -----------------
-with tab1:
+# ----------------- TAB 1: TRỢ LÝ AI (ĐÃ ĐƯỢC ĐẨY LÊN ĐẦU) -----------------
+with tab_ai:
+    if not HAS_AI or not API_KEY:
+        st.error("⚠️ Lỗi: Chưa cấu hình đúng thư viện AI hoặc mất kết nối tới API Key (Két sắt Secrets).")
+    else:
+        st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
+        
+        # Bảng gợi ý đặt câu hỏi trực quan
+        st.markdown("""
+        <div style="background-color: rgba(0, 153, 255, 0.1); padding: 15px; border-radius: 8px; border-left: 4px solid #0099ff; margin-bottom: 20px;">
+            <strong>💡 MẪU CÂU HỎI NHANH:</strong><br>
+            <i>Hãy gõ câu hỏi theo ý bạn, AI sẽ tính toán ngay lập tức:</i>
+            <ul style="margin-top: 5px; margin-bottom: 0px;">
+                <li>"Tàu ETA 07:00 ngày 25/03, mớn 10.7m, đi Cát Lái. Giờ nào an toàn?"</li>
+                <li>"Ngày 15/4 mớn 9.5m đi TC Hiệp Phước có lọt không?"</li>
+                <li>"Tìm giờ POB tốt nhất cho tàu mớn 11m Inbound Cát Lái ngày 2/5."</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if "chat_session" not in st.session_state:
+            with st.spinner("Đang khởi động hệ thống AI & Nạp dữ liệu thủy triều..."):
+                try:
+                    ai_model, model_name, sys_instruct = get_ai_bot(extremes_data, API_KEY)
+                    
+                    st.session_state.chat_session = ai_model.start_chat(history=[
+                        {"role": "user", "parts": [sys_instruct]},
+                        {"role": "model", "parts": ["Đã rõ. Tôi sẽ báo cáo cực kỳ ngắn gọn, chốt ngay kết quả lọt/cạn và khung giờ an toàn, không phân tích dài dòng."]}
+                    ])
+                except Exception as e:
+                    st.error(f"Lỗi khởi tạo AI: {e}")
+
+        if "chat_session" in st.session_state:
+            for message in st.session_state.chat_session.history[2:]:
+                role = "user" if message.role == "user" else "assistant"
+                with st.chat_message(role):
+                    st.markdown(message.parts[0].text)
+
+            if user_prompt := st.chat_input("Nhập yêu cầu điều động tàu tại đây..."):
+                with st.chat_message("user"):
+                    st.markdown(user_prompt)
+                
+                with st.chat_message("assistant"):
+                    with st.spinner("Đang tra cứu thủy triều và tính toán..."):
+                        try:
+                            response = st.session_state.chat_session.send_message(user_prompt)
+                            st.markdown(response.text)
+                        except Exception as e:
+                            st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
+
+# ----------------- TAB 2: POB AND DRAFT -----------------
+with tab_pob_draft:
     col1, col2 = st.columns(2)
     bay_gio = get_vn_time()
     gio_mac_dinh = time(bay_gio.hour, 0)
@@ -319,8 +363,8 @@ with tab1:
                     st.write(f"📏 Yêu cầu: {req:.1f}m | 🌊 TT: {act:.1f}m")
                     st.caption(f"(Luồng {CHANNEL_DEPTHS[p]}m + Triều {t_h:.1f}m)")
 
-# ----------------- TAB 2: MAX DRAFT TABLE -----------------
-with tab2:
+# ----------------- TAB 3: MAX DRAFT TABLE -----------------
+with tab_max_draft:
     bay_gio_t2 = get_vn_time()
     col_th, col_ck, col_tu = st.columns([1, 1, 2])
     with col_th: 
@@ -372,8 +416,8 @@ with tab2:
         else:
             st.info("Vui lòng chọn ít nhất một điểm để hiển thị dữ liệu.")
 
-# ----------------- TAB 3: DRAFT FOR POB -----------------
-with tab3:
+# ----------------- TAB 4: DRAFT FOR POB -----------------
+with tab_draft_pob:
     col3_1, col3_2 = st.columns(2)
     bay_gio_t3 = get_vn_time()
     
@@ -588,48 +632,6 @@ with tab3:
                     st.write("Không có dữ liệu")
                 st.markdown("</div>", unsafe_allow_html=True)
 
-# ----------------- TAB 4: TRỢ LÝ AI (CHATBOT) -----------------
-with tab4:
-    if not HAS_AI or not API_KEY:
-        st.error("⚠️ Lỗi: Chưa cấu hình đúng thư viện AI hoặc mất kết nối tới API Key (Két sắt Secrets).")
-    else:
-        st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
-        
-        if "chat_session" not in st.session_state:
-            with st.spinner("Đang kết nối hệ thống AI & Nạp dữ liệu thủy triều..."):
-                try:
-                    # GỌI HÀM VỚI TÊN MỚI (PHÁ CACHE CŨ) VÀ ÉP CỨNG GEMINI-1.5-FLASH
-                    ai_model, model_name, sys_instruct = get_ai_bot(extremes_data, API_KEY)
-                    
-                    st.success(f"✅ Đã kết nối thành công với não bộ AI: **{model_name}**")
-                    
-                    # NHỒI LUẬT HÀNG HẢI VÀO TIN NHẮN ĐẦU TIÊN ĐỂ CHỐNG LỖI
-                    st.session_state.chat_session = ai_model.start_chat(history=[
-                        {"role": "user", "parts": [sys_instruct]},
-                        {"role": "model", "parts": ["Đã rõ. Tôi đã nắm toàn bộ dữ liệu thủy triều 2026 và các quy tắc điều động tàu. Hãy đưa ra câu hỏi của bạn!"]}
-                    ])
-                except Exception as e:
-                    st.error(f"Lỗi khởi tạo AI: {e}")
-
-        if "chat_session" in st.session_state:
-            # Bỏ qua 2 tin nhắn hệ thống đầu tiên (index 0 và 1) không in ra màn hình
-            for message in st.session_state.chat_session.history[2:]:
-                role = "user" if message.role == "user" else "assistant"
-                with st.chat_message(role):
-                    st.markdown(message.parts[0].text)
-
-            if user_prompt := st.chat_input("Nhập câu hỏi tại đây... (Ví dụ: Tàu ETA 07:00 ngày 25/3 mớn 10.7m đi Cát Lái...)"):
-                with st.chat_message("user"):
-                    st.markdown(user_prompt)
-                
-                with st.chat_message("assistant"):
-                    with st.spinner("AI đang phân tích luồng và tính toán thủy triều..."):
-                        try:
-                            response = st.session_state.chat_session.send_message(user_prompt)
-                            st.markdown(response.text)
-                        except Exception as e:
-                            st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
-
 # ==========================================
 # DISCLAIMER PHÁP LÝ CHUẨN QUỐC TẾ
 # ==========================================
@@ -639,5 +641,3 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
-
-
