@@ -3,11 +3,19 @@ import pandas as pd
 from datetime import datetime, timedelta, time, timezone
 import math
 
+# Bắt lỗi nếu chưa cài thư viện AI
+try:
+    import google.generativeai as genai
+    HAS_AI = True
+except ImportError:
+    HAS_AI = False
+
 # ==========================================
 # CẤU HÌNH THÔNG SỐ CƠ BẢN & MÚI GIỜ
 # ==========================================
 FILE_EXCEL = '06 tram HL6-HL21-HL27-BB-TCHP-VL-HLWVT 2026.xlsx'
 NAM_DU_LIEU = 2026
+API_KEY = "AIzaSyAwp0ID485bMSrb01yci9VAHs2wHbou6c8" # API Key của bạn
 
 LAG_HIEPPHUOC_HOURS = 2.0 
 
@@ -16,7 +24,6 @@ CHANNEL_DEPTHS = {
     'VL': 8.0, 'TCHP': 8.0, 'BB': 6.7
 }
 
-# ĐÃ CẬP NHẬT TÊN TUYẾN LUỒNG THEO FEEDBACK NGƯỜI DÙNG
 ROUTES = {
     "ĐI VÀO (INBOUND)": {
         "P0 Vũng Tàu - Lòng Tàu - Cát Lái": {'HL27': 2.0, 'HL21': 2.5, 'HL6': 4.0},
@@ -48,7 +55,6 @@ def calc_safe_th(amp):
     r2 = 2.0 * amp / 12.0
     r3 = 3.0 * amp / 12.0
     limit = 0.4
-    
     if r1 > limit: return limit / r1
     elif r2 > limit: return 1.0 + (limit - r1) / (r2 - r1)
     elif r3 > limit: return 2.0 + (limit - r2) / (r3 - r2)
@@ -91,20 +97,17 @@ def load_extremes_data():
     try:
         sheet_n = 'HLW-VT' if 'HLW-VT' in pd.ExcelFile(FILE_EXCEL).sheet_names else 'HW_LW_VT'
         df = pd.read_excel(FILE_EXCEL, sheet_name=sheet_n, header=None)
-        
         def parse_date(x):
             x_str = str(x).strip()
             if x_str.startswith(f'{NAM_DU_LIEU}-'):
                 try: return datetime.strptime(x_str[:10], '%Y-%m-%d').date()
                 except: return None
             return None
-        
         df['RealDate'] = df[0].apply(parse_date)
         is_blank = df[1].isna() | (df[1].astype(str).str.strip() == '')
         df['Block'] = is_blank.cumsum()
         df['RealDate'] = df.groupby('Block')['RealDate'].transform(lambda x: x.bfill().ffill())
         df_valid = df[~is_blank].dropna(subset=['RealDate', 1, 2])
-        
         extremes = []
         for _, row in df_valid.iterrows():
             try:
@@ -116,14 +119,11 @@ def load_extremes_data():
                 dt = datetime.combine(d_obj, time(h, m))
                 extremes.append({'dt': dt, 'level': muc_nuoc})
             except: continue
-            
         extremes = sorted(extremes, key=lambda x: x['dt'])
-        
         for i in range(len(extremes)):
             if i == 0: extremes[i]['type'] = 'HW' if extremes[i]['level'] > extremes[i+1]['level'] else 'LW'
             elif i == len(extremes) - 1: extremes[i]['type'] = 'HW' if extremes[i]['level'] > extremes[i-1]['level'] else 'LW'
             else: extremes[i]['type'] = 'HW' if extremes[i]['level'] > extremes[i-1]['level'] else 'LW'
-            
         return extremes
     except Exception as e:
         return None
@@ -172,8 +172,42 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     except: return pd.DataFrame()
     return pd.DataFrame(danh_sach_dong)
 
+# Khởi tạo mô hình AI (Cache để không phải load lại dữ liệu nhiều lần)
+@st.cache_resource
+def get_ai_model(extremes_list):
+    genai.configure(api_key=API_KEY)
+    
+    # Ép toàn bộ 1400 mốc thủy triều vào não AI
+    almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in extremes_list]) if extremes_list else "Không có dữ liệu triều."
+
+    system_instruction = f"""
+    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot AI). Bạn là một chuyên gia điều động tàu giàu kinh nghiệm.
+    Nhiệm vụ: Tư vấn giờ điều động tàu (POB), tính toán mớn nước (UKC), và Window Time an toàn dựa trên câu hỏi của người dùng.
+
+    THÔNG SỐ BẮT BUỘC:
+    1. UKC (Khoảng sáng gầm tàu):
+       - Ban ngày (06:00 - 17:59): UKC = 7% mớn nước.
+       - Ban đêm (18:00 - 05:59): UKC = 10% mớn nước.
+       - Độ sâu yêu cầu = Mớn nước * (1 + UKC).
+    2. Độ sâu chuẩn các chokepoint (Luồng): HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), Vàm Láng (-8.0m), TC Hiệp Phước (-8.0m).
+    3. Thời gian hành trình INBOUND (Vào): Từ Vũng Tàu tới HL27 mất 2h, HL21 mất 2.5h, HL6 (Cát Lái) mất 4h.
+
+    HƯỚNG DẪN TƯ VẤN:
+    - Khi người dùng hỏi (Ví dụ: "Tàu ETA 07:00 ngày 25/3 mớn 10.7m đi Cát Lái giờ nào an toàn?"):
+      + B1: Xác định ngày người dùng hỏi (trong năm 2026).
+      + B2: Tra cứu các mốc HW/LW của ngày đó trong Bảng dữ liệu Thủy triều bên dưới.
+      + B3: Tính yêu cầu độ sâu (UKC) cho mớn 10.7m. Đánh giá xem với độ sâu HL6 là 8.8m thì triều cần lên bao nhiêu mét mới qua được.
+      + B4: Nếu giờ người dùng đề xuất (07:00) rơi vào lúc triều ròng (LW) $\\rightarrow$ Báo KHÔNG AN TOÀN. 
+      + B5: Tự động nhìn vào bảng triều để TÌM GIỜ ĐỀ XUẤT thay thế (Gợi ý các khung giờ gần đỉnh triều HW để tàu đi vào lọt mớn và dòng chảy êm). Trả lời mạch lạc, dễ hiểu, chuyên nghiệp theo văn phong Hàng hải.
+
+    DỮ LIỆU THỦY TRIỀU VŨNG TÀU NĂM 2026 (Làm cơ sở tra cứu):
+    {almanac_str}
+    """
+    model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction)
+    return model
+
 # ==========================================
-# GIAO DIỆN WEB (UI) - ÉP HIỂN THỊ LABEL NGANG
+# GIAO DIỆN WEB (UI)
 # ==========================================
 st.set_page_config(page_title="Tan Cang Pilot Tide Calculation", layout="wide", initial_sidebar_state="collapsed")
 
@@ -197,46 +231,22 @@ st.markdown("""
     
     div.row-widget.stRadio > div{ flex-direction:row; }
     
-    /* ======== ÉP LABEL WIDGET NẰM NGANG ======== */
-    [data-testid="stNumberInput"], 
-    [data-testid="stDateInput"], 
-    [data-testid="stTimeInput"], 
-    [data-testid="stSelectbox"], 
-    [data-testid="stMultiSelect"] {
-        display: flex;
-        flex-direction: row;
-        align-items: center;
+    /* ÉP LABEL WIDGET NẰM NGANG */
+    [data-testid="stNumberInput"], [data-testid="stDateInput"], [data-testid="stTimeInput"], 
+    [data-testid="stSelectbox"], [data-testid="stMultiSelect"] {
+        display: flex; flex-direction: row; align-items: center;
     }
-    
-    /* Định dạng độ rộng tiêu đề để thẳng hàng nhau */
-    [data-testid="stNumberInput"] > label, 
-    [data-testid="stDateInput"] > label, 
-    [data-testid="stTimeInput"] > label, 
-    [data-testid="stSelectbox"] > label, 
+    [data-testid="stNumberInput"] > label, [data-testid="stDateInput"] > label, 
+    [data-testid="stTimeInput"] > label, [data-testid="stSelectbox"] > label, 
     [data-testid="stMultiSelect"] > label {
-        width: 100px !important;
-        min-width: 100px !important;
-        margin-bottom: 0px !important;
-        margin-right: 15px;
-        display: flex;
-        align-items: center;
+        width: 100px !important; min-width: 100px !important; margin-bottom: 0px !important; margin-right: 15px; display: flex; align-items: center;
     }
+    [data-testid="stNumberInput"] > div, [data-testid="stDateInput"] > div, 
+    [data-testid="stTimeInput"] > div, [data-testid="stSelectbox"] > div, [data-testid="stMultiSelect"] > div { flex: 1; }
+    [data-testid="stCheckbox"] { display: flex; align-items: center; padding-top: 8px; }
     
-    /* Ép ô nhập liệu chiếm hết phần ngang còn lại */
-    [data-testid="stNumberInput"] > div, 
-    [data-testid="stDateInput"] > div, 
-    [data-testid="stTimeInput"] > div, 
-    [data-testid="stSelectbox"] > div, 
-    [data-testid="stMultiSelect"] > div {
-        flex: 1;
-    }
-
-    /* Tinh chỉnh cho Checkbox thẳng hàng */
-    [data-testid="stCheckbox"] {
-        display: flex;
-        align-items: center;
-        padding-top: 8px; 
-    }
+    /* Căn chỉnh riêng cho Chat UI */
+    .stChatMessage { border-radius: 10px; padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -256,7 +266,8 @@ extremes_data = load_extremes_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-tab1, tab2, tab3 = st.tabs(["🚀 POB and Draft", "📅 Max Draft Table", "⏱️ Draft for POB"])
+# ĐÃ THÊM TAB 4: TRỢ LÝ AI
+tab1, tab2, tab3, tab4 = st.tabs(["🚀 POB and Draft", "📅 Max Draft Table", "⏱️ Draft for POB", "🤖 Trợ lý AI"])
 
 # ----------------- TAB 1: POB AND DRAFT -----------------
 with tab1:
@@ -395,8 +406,7 @@ with tab3:
                 local_extremes = []
                 for ex in extremes_data:
                     lag = timedelta(hours=LAG_HIEPPHUOC_HOURS)
-                    # Cập nhật nhận diện Tên Luồng Cát Lái
-                    if "CÁT LÁI" in tuyen_luong_t3.upper():
+                    if "Cát Lái" in tuyen_luong_t3:
                         if ex['type'] == 'HW':
                             lag = timedelta(hours=3, minutes=5)
                         else:
@@ -541,7 +551,6 @@ with tab3:
                     html_table = "<table class='tide-table'><tr><th>Phân loại</th><th>Vũng Tàu</th><th>Độ cao</th><th>Cát Lái</th><th>Mũi tên</th></tr>"
                     for e in day_ex:
                         if e['type'] == 'HW':
-                            # Nhận diện trạm Cát Lái bằng cách check Tên Luồng (Tab 3)
                             lag = timedelta(hours=3, minutes=5)
                             arrow = "↙"
                             row_class = "hw-row"
@@ -554,7 +563,6 @@ with tab3:
                             arrow = "↗"
                             row_class = "lw-row"
                             
-                        # Nếu đi TC Hiệp Phước thì Lag là 2.0 (theo logic cũ)
                         if "Hiệp Phước" in tuyen_luong_t3:
                             lag = timedelta(hours=LAG_HIEPPHUOC_HOURS)
                             
@@ -567,6 +575,44 @@ with tab3:
                 else:
                     st.write("Không có dữ liệu")
                 st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------- TAB 4: TRỢ LÝ AI (CHATBOT) -----------------
+with tab4:
+    if not HAS_AI:
+        st.error("⚠️ Lỗi: Chưa cài đặt thư viện AI. Vui lòng thêm `google-generativeai` vào file `requirements.txt` trên hệ thống máy chủ/Hugging Face.")
+    else:
+        st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
+        st.info("💡 Bạn có thể hỏi bằng ngôn ngữ tự nhiên. Ví dụ: *'Tàu ETA 07:00 ngày 25/03 mớn 10.7m đi Cát Lái giờ nào an toàn?'*")
+
+        # Khởi tạo hoặc lấy lịch sử chat
+        if "chat_session" not in st.session_state:
+            with st.spinner("Đang kết nối hệ thống AI & Nạp dữ liệu thủy triều 2026..."):
+                try:
+                    ai_model = get_ai_model(extremes_data)
+                    st.session_state.chat_session = ai_model.start_chat(history=[])
+                except Exception as e:
+                    st.error(f"Lỗi khởi tạo AI: {e}")
+
+        # Hiển thị tin nhắn cũ
+        if "chat_session" in st.session_state:
+            for message in st.session_state.chat_session.history:
+                role = "user" if message.role == "user" else "assistant"
+                with st.chat_message(role):
+                    st.markdown(message.parts[0].text)
+
+            # Khung nhập liệu
+            if user_prompt := st.chat_input("Nhập câu hỏi tại đây..."):
+                with st.chat_message("user"):
+                    st.markdown(user_prompt)
+                
+                with st.chat_message("assistant"):
+                    with st.spinner("AI đang phân tích luồng và tính toán thủy triều..."):
+                        try:
+                            # Gửi câu hỏi lên Gemini
+                            response = st.session_state.chat_session.send_message(user_prompt)
+                            st.markdown(response.text)
+                        except Exception as e:
+                            st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
 
 # ==========================================
 # DISCLAIMER PHÁP LÝ CHUẨN QUỐC TẾ
