@@ -203,7 +203,7 @@ def get_ai_model(extremes_list):
     DỮ LIỆU THỦY TRIỀU VŨNG TÀU NĂM 2026 (Làm cơ sở tra cứu):
     {almanac_str}
     """
-    model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction)
+        model = genai.GenerativeModel('gemini-1.5-flash-latest', system_instruction=system_instruction)
     return model
 
 # ==========================================
@@ -623,3 +623,4 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
+
