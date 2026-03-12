@@ -173,7 +173,6 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # Khởi tạo mô hình AI (Cache để không phải load lại dữ liệu nhiều lần)
-# Khởi tạo mô hình AI (Cache để không phải load lại dữ liệu nhiều lần)
 @st.cache_resource
 def get_ai_model(extremes_list):
     genai.configure(api_key=API_KEY)
@@ -199,14 +198,22 @@ def get_ai_model(extremes_list):
       + B2: Tra cứu các mốc HW/LW của ngày đó trong Bảng dữ liệu Thủy triều bên dưới.
       + B3: Tính yêu cầu độ sâu (UKC) cho mớn 10.7m. Đánh giá xem với độ sâu HL6 là 8.8m thì triều cần lên bao nhiêu mét mới qua được.
       + B4: Nếu giờ người dùng đề xuất rơi vào lúc triều ròng (LW) thì Báo KHÔNG AN TOÀN. 
-      + B5: Tự động nhìn vào bảng triều để TÌM GIỜ ĐỀ XUẤT thay thế (Gợi ý các khung giờ gần đỉnh triều HW để tàu đi vào lọt mớn và dòng chảy êm). Trả lời mạch lạc, dễ hiểu, chuyên nghiệp theo văn phong Hàng hải.
+      + B5: Tự động nhìn vào bảng triều để TÌM GIỜ ĐỀ XUẤT thay thế. Trả lời mạch lạc, dễ hiểu, chuyên nghiệp theo văn phong Hàng hải.
 
     DỮ LIỆU THỦY TRIỀU VŨNG TÀU NĂM 2026 (Làm cơ sở tra cứu):
     {almanac_str}
     """
     
-    # Hai dòng dưới đây phải thẳng hàng với chữ 'genai.configure' ở trên
-    model = genai.GenerativeModel('gemini-1.5-flash-latest', system_instruction=system_instruction)
+    # --- THUẬT TOÁN TỰ ĐỘNG BẮT MODEL (CHỐNG LỖI 404) ---
+    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    
+    chosen_model = 'gemini-1.5-flash' # Mặc định
+    for m in available_models:
+        if 'gemini-1.5-flash' in m:
+            chosen_model = m.replace('models/', '')
+            break
+            
+    model = genai.GenerativeModel(chosen_model, system_instruction=system_instruction)
     return model
 
 # ==========================================
@@ -626,5 +633,6 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
+
 
 
