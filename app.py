@@ -133,8 +133,52 @@ def load_extremes_data():
     except Exception as e:
         return None
 
+def tinh_ukc(draft, eta_time):
+    t = eta_time.time()
+    pct = 0.07 if datetime.strptime('05:01','%H:%M').time() <= t <= datetime.strptime('17:59','%H:%M').time() else 0.10
+    return lam_tron_hang_hai(draft * (1 + pct)), pct
+
+def noi_suy_thuy_trieu(df_tide, eta_time):
+    try:
+        th, ng, gi, mi = eta_time.month, eta_time.day, eta_time.hour, eta_time.minute
+        if (th, ng) not in df_tide.index: return None
+        v1 = df_tide.loc[(th, ng), gi]
+        if isinstance(v1, pd.Series): v1 = v1.iloc[0]
+        if gi == 23:
+            eta2 = eta_time + timedelta(hours=1)
+            th2, ng2, gi2 = eta2.month, eta2.day, 0
+        else: th2, ng2, gi2 = th, ng, gi + 1
+        v2 = df_tide.loc[(th2, ng2), gi2] if (th2, ng2) in df_tide.index else v1
+        if isinstance(v2, pd.Series): v2 = v2.iloc[0]
+        return lam_tron_hang_hai(v1 + ((v2 - v1) * (mi / 60)))
+    except: return None
+
+@st.cache_data
+def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
+    danh_sach_dong = []
+    try:
+        pts = list(CHANNEL_DEPTHS.keys())
+        ngay_hop_le = sorted(list(set(data_dict[pts[0]].loc[thang_chon].index.tolist())))
+        for ngay in ngay_hop_le:
+            try:
+                date_obj = datetime(NAM_DU_LIEU, thang_chon, int(ngay))
+                thu_ngay_str = f"{date_obj.strftime('%a')}\n{ngay}"
+            except: thu_ngay_str = str(ngay)
+            for point in pts:
+                if point not in data_dict: continue
+                dong = {'Ngày': thu_ngay_str, 'Điểm': point, 'Ngay_Goc': int(ngay)}
+                for gio in range(24):
+                    muc = data_dict[point].loc[(thang_chon, ngay), gio]
+                    if isinstance(muc, pd.Series): muc = muc.iloc[0]
+                    ukc = 0.07 if 6 <= gio <= 17 else 0.10
+                    mon = lam_tron_hang_hai((CHANNEL_DEPTHS[point] + muc) / (1 + ukc))
+                    dong[f'{gio}h'] = f"{mon:.1f}"
+                danh_sach_dong.append(dong)
+    except: return pd.DataFrame()
+    return pd.DataFrame(danh_sach_dong)
+
 # ==========================================
-# KHỞI TẠO AI CHATBOT (CHUẨN ĐỊA LÝ & YÊU CẦU NGẮN GỌN)
+# KHỞI TẠO AI CHATBOT 
 # ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
@@ -147,7 +191,7 @@ def get_ai_bot(_extremes_list, api_key):
     
     ĐỊNH NGHĨA TUYẾN LUỒNG & CHOKEPOINT (TUYỆT ĐỐI TUÂN THỦ KHÔNG ĐƯỢC NHẦM LẪN):
     1. ĐI VÀO (INBOUND):
-       - "P0 Vũng Tàu - Lòng Tàu - Cát Lái": Qua Dần Xây/HL27 (sau 2h), L'est/HL21 (sau 2.5h), Đèn Đỏ/HL6 (sau 4h). Tuyệt đối KHÔNG liên quan đến Hiệp Phước.
+       - "P0 Vũng Tàu - Lòng Tàu - Cát Lái": Qua Dần Xây/HL27 (sau 2h), L'est/HL21 (sau 2.5h), Đèn Đỏ/HL6 (sau 4h). Tuyệt đối KHÔNG liên quan đến Hiệp Phước hay Vàm Láng.
        - "P0 SR (H25) - Soài Rạp - TC Hiệp Phước": Qua Vàm Láng/VL (sau 1.5h), TC Hiệp Phước/TCHP (sau 3h).
     2. ĐI RA (OUTBOUND):
        - "Cát Lái - Lòng Tàu - P0 Vũng Tàu": Qua HL6 (sau 0.5h), HL21 (sau 2h), HL27 (sau 2.5h).
@@ -160,7 +204,7 @@ def get_ai_bot(_extremes_list, api_key):
     
     CẤU TRÚC BÁO CÁO (BẮT BUỘC ĐÚNG 3 GẠCH ĐẦU DÒNG, DỨT KHOÁT NHƯ BỘ ĐÀM VHF):
     - Tuyến luồng: [Đọc đúng Tên tuyến và các điểm cạn theo định nghĩa trên].
-    - Đánh giá mớn: Mớn [X]m + UKC cần độ sâu [Y]m. Đánh giá [Lọt / Cạn].
+    - Đánh giá mớn: Mớn [X]m + UKC cần độ sâu tối thiểu [Y]m. Đánh giá [Lọt / Cạn].
     - Chốt giờ POB: [Khung giờ an toàn đề xuất từ ... đến ...].
     
     Tuyệt đối không giải thích thuật toán, không nói luyên thuyên. 
@@ -193,7 +237,7 @@ def get_ai_bot(_extremes_list, api_key):
     return model, chosen_model, system_instruction
 
 # ==========================================
-# GIAO DIỆN WEB (UI) - KÈM HIỆU ỨNG 3D
+# GIAO DIỆN WEB (UI) - KÈM HIỆU ỨNG 3D CHO TAB
 # ==========================================
 st.set_page_config(page_title="Tan Cang Pilot Tide Calculation", layout="wide", initial_sidebar_state="collapsed")
 
@@ -226,25 +270,25 @@ st.markdown("""
     [data-testid="stCheckbox"] { display: flex; align-items: center; padding-top: 8px; }
     .stChatMessage { border-radius: 10px; padding: 10px; }
 
-    /* ======== HIỆU ỨNG 3D CHO TABS ======== */
+    /* ======== HIỆU ỨNG 3D NÚT BẤM CHO CÁC TAB ======== */
     button[data-baseweb="tab"] {
         background-color: rgba(128,128,128,0.05); 
         border: 1px solid rgba(128,128,128,0.2);
-        border-bottom: 4px solid rgba(128,128,128,0.3); /* Cạnh dưới đổ bóng 3D */
+        border-bottom: 4px solid rgba(128,128,128,0.3);
         border-radius: 10px 10px 0 0;
         margin-right: 5px;
         transition: all 0.15s ease-in-out;
     }
     button[data-baseweb="tab"]:hover {
-        transform: translateY(-2px); /* Nhô lên khi lướt qua */
+        transform: translateY(-2px); 
         border-bottom: 6px solid rgba(128,128,128,0.4);
     }
     button[data-baseweb="tab"][aria-selected="true"] {
         background-color: transparent;
-        border-bottom: 0px solid transparent; /* Mất cạnh dưới tạo cảm giác lún */
-        transform: translateY(4px); /* Ép nút lún xuống */
-        box-shadow: inset 0 3px 6px rgba(0,0,0,0.1); /* Đổ bóng chìm trong nút */
-        border-top: 3px solid #ff4b4b; /* Viền đỏ nổi bật khi được chọn */
+        border-bottom: 0px solid transparent; 
+        transform: translateY(4px); 
+        box-shadow: inset 0 3px 6px rgba(0,0,0,0.1); 
+        border-top: 3px solid #ff4b4b; 
     }
     @media (prefers-color-scheme: dark) {
         button[data-baseweb="tab"][aria-selected="true"] {
@@ -270,7 +314,7 @@ extremes_data = load_extremes_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-# ĐÃ ĐỔI LẠI THỨ TỰ TABS THEO ĐÚNG YÊU CẦU MỚI
+# ĐÃ SẮP XẾP LẠI THỨ TỰ TABS THEO ĐÚNG YÊU CẦU CỦA BẠN
 tab_pob_draft, tab_ai, tab_draft_pob, tab_max_draft = st.tabs([
     "🚀 POB and Draft", 
     "🤖 Trợ lý AI", 
@@ -342,6 +386,7 @@ with tab_ai:
                     st.error(f"Lỗi khởi tạo AI: {e}")
 
         if "chat_session" in st.session_state:
+            # Bỏ qua 2 tin nhắn hệ thống đầu tiên
             for message in st.session_state.chat_session.history[2:]:
                 role = "user" if message.role == "user" else "assistant"
                 with st.chat_message(role):
@@ -580,7 +625,7 @@ with tab_max_draft:
     bay_gio_t2 = get_vn_time()
     col_th, col_ck, col_tu = st.columns([1, 1, 2])
     with col_th: 
-        thang_ch = st.selectbox("Tháng", list(range(1, 13)), bay_gio_t2.month - 1)
+        thang_ch = st.selectbox("Tháng", list(range(1, 13)), index=int(bay_gio_t2.month - 1))
     with col_ck: 
         show_old = st.checkbox("Hiện ngày đã qua", value=False)
     with col_tu: 
