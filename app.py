@@ -133,55 +133,8 @@ def load_extremes_data():
     except Exception as e:
         return None
 
-def tinh_ukc(draft, eta_time):
-    t = eta_time.time()
-    pct = 0.07 if datetime.strptime('05:01','%H:%M').time() <= t <= datetime.strptime('17:59','%H:%M').time() else 0.10
-    return lam_tron_hang_hai(draft * (1 + pct)), pct
-
-def noi_suy_thuy_trieu(df_tide, eta_time):
-    try:
-        th, ng, gi, mi = eta_time.month, eta_time.day, eta_time.hour, eta_time.minute
-        if (th, ng) not in df_tide.index: return None
-        v1 = df_tide.loc[(th, ng), gi]
-        if isinstance(v1, pd.Series): v1 = v1.iloc[0]
-        if gi == 23:
-            eta2 = eta_time + timedelta(hours=1)
-            th2, ng2, gi2 = eta2.month, eta2.day, 0
-        else: th2, ng2, gi2 = th, ng, gi + 1
-        v2 = df_tide.loc[(th2, ng2), gi2] if (th2, ng2) in df_tide.index else v1
-        if isinstance(v2, pd.Series): v2 = v2.iloc[0]
-        return lam_tron_hang_hai(v1 + ((v2 - v1) * (mi / 60)))
-    except: return None
-
-@st.cache_data
-def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
-    danh_sach_dong = []
-    try:
-        pts = list(CHANNEL_DEPTHS.keys())
-        ngay_hop_le = sorted(list(set(data_dict[pts[0]].loc[thang_chon].index.tolist())))
-        for ngay in ngay_hop_le:
-            try:
-                date_obj = datetime(NAM_DU_LIEU, thang_chon, int(ngay))
-                thu_ngay_str = f"{date_obj.strftime('%a')}\n{ngay}"
-            except: thu_ngay_str = str(ngay)
-            for point in pts:
-                if point not in data_dict: continue
-                dong = {'Ngày': thu_ngay_str, 'Điểm': point, 'Ngay_Goc': int(ngay)}
-                for gio in range(24):
-                    muc = data_dict[point].loc[(thang_chon, ngay), gio]
-                    if isinstance(muc, pd.Series): muc = muc.iloc[0]
-                    ukc = 0.07 if 6 <= gio <= 17 else 0.10
-                    mon = lam_tron_hang_hai((CHANNEL_DEPTHS[point] + muc) / (1 + ukc))
-                    dong[f'{gio}h'] = f"{mon:.1f}"
-                danh_sach_dong.append(dong)
-    except: return pd.DataFrame()
-    return pd.DataFrame(danh_sach_dong)
-
 # ==========================================
-# KHỞI TẠO AI CHATBOT (CẬP NHẬT CẤU TRÚC TRẢ LỜI)
-# ==========================================
-# ==========================================
-# KHỞI TẠO AI CHATBOT (ĐỊNH NGHĨA LẠI KHÁI NIỆM LUỒNG TUYẾN)
+# KHỞI TẠO AI CHATBOT (CHUẨN ĐỊA LÝ & YÊU CẦU NGẮN GỌN)
 # ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
@@ -189,7 +142,6 @@ def get_ai_bot(_extremes_list, api_key):
     
     almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in _extremes_list]) if _extremes_list else "Không có dữ liệu triều."
 
-    # LỆNH ĐIỀU KHIỂN AI MỚI: Dạy lại môn Địa lý Hàng hải & Ép trả lời ngắn
     system_instruction = f"""
     Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). Bạn là người ra quyết định chuyên nghiệp.
     
@@ -237,12 +189,11 @@ def get_ai_bot(_extremes_list, api_key):
     except Exception as e:
         chosen_model = 'gemini-1.5-flash'
         
-    # Đổi tên cache key bằng cách thêm _v2 để ép Streamlit quên lệnh cũ đi
     model = genai.GenerativeModel(chosen_model)
     return model, chosen_model, system_instruction
 
 # ==========================================
-# GIAO DIỆN WEB (UI)
+# GIAO DIỆN WEB (UI) - KÈM HIỆU ỨNG 3D
 # ==========================================
 st.set_page_config(page_title="Tan Cang Pilot Tide Calculation", layout="wide", initial_sidebar_state="collapsed")
 
@@ -251,15 +202,19 @@ st.markdown("""
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
     .stButton>button { min-height: 55px; font-weight: bold; border-radius: 8px; margin-top: 15px; }
     .footer { text-align: justify; color: gray; font-size: 0.85em; margin-top: 60px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 20px; }
+    
     .safe-window { background-color: rgba(46, 160, 67, 0.15); border-left: 5px solid #2ea043; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .warn-window { background-color: rgba(212, 167, 44, 0.15); border-left: 5px solid #d4a72c; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .unsafe-window { background-color: rgba(207, 34, 46, 0.15); border-left: 5px solid #cf222e; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
+    
     .tide-box { background-color: rgba(128, 128, 128, 0.05); padding: 10px; border-radius: 8px; text-align: center; border: 1px solid rgba(128, 128, 128, 0.2); }
     .tide-table { width: 100%; text-align: center; font-size: 0.9em; border-collapse: collapse; margin-top: 10px; }
     .tide-table th { font-weight: bold; border-bottom: 1px solid rgba(128, 128, 128, 0.3); padding-bottom: 5px; opacity: 0.8; }
     .tide-table td { padding: 4px 0; border-bottom: 1px dashed rgba(128, 128, 128, 0.1); }
+    
     .hw-row { background-color: rgba(0, 153, 255, 0.15); font-weight: bold; color: #0099ff; }
     .lw-row { background-color: rgba(255, 75, 75, 0.15); font-weight: bold; color: #ff4b4b; }
+    
     div.row-widget.stRadio > div{ flex-direction:row; }
     [data-testid="stNumberInput"], [data-testid="stDateInput"], [data-testid="stTimeInput"], 
     [data-testid="stSelectbox"], [data-testid="stMultiSelect"] { display: flex; flex-direction: row; align-items: center; }
@@ -270,6 +225,32 @@ st.markdown("""
     [data-testid="stTimeInput"] > div, [data-testid="stSelectbox"] > div, [data-testid="stMultiSelect"] > div { flex: 1; }
     [data-testid="stCheckbox"] { display: flex; align-items: center; padding-top: 8px; }
     .stChatMessage { border-radius: 10px; padding: 10px; }
+
+    /* ======== HIỆU ỨNG 3D CHO TABS ======== */
+    button[data-baseweb="tab"] {
+        background-color: rgba(128,128,128,0.05); 
+        border: 1px solid rgba(128,128,128,0.2);
+        border-bottom: 4px solid rgba(128,128,128,0.3); /* Cạnh dưới đổ bóng 3D */
+        border-radius: 10px 10px 0 0;
+        margin-right: 5px;
+        transition: all 0.15s ease-in-out;
+    }
+    button[data-baseweb="tab"]:hover {
+        transform: translateY(-2px); /* Nhô lên khi lướt qua */
+        border-bottom: 6px solid rgba(128,128,128,0.4);
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: transparent;
+        border-bottom: 0px solid transparent; /* Mất cạnh dưới tạo cảm giác lún */
+        transform: translateY(4px); /* Ép nút lún xuống */
+        box-shadow: inset 0 3px 6px rgba(0,0,0,0.1); /* Đổ bóng chìm trong nút */
+        border-top: 3px solid #ff4b4b; /* Viền đỏ nổi bật khi được chọn */
+    }
+    @media (prefers-color-scheme: dark) {
+        button[data-baseweb="tab"][aria-selected="true"] {
+            box-shadow: inset 0 3px 6px rgba(0,0,0,0.5);
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -289,9 +270,47 @@ extremes_data = load_extremes_data()
 if data_dict is None:
     st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
 
-tab_ai, tab_pob_draft, tab_max_draft, tab_draft_pob = st.tabs(["🤖 Trợ lý AI", "🚀 POB and Draft", "📅 Max Draft Table", "⏱️ Draft for POB"])
+# ĐÃ ĐỔI LẠI THỨ TỰ TABS THEO ĐÚNG YÊU CẦU MỚI
+tab_pob_draft, tab_ai, tab_draft_pob, tab_max_draft = st.tabs([
+    "🚀 POB and Draft", 
+    "🤖 Trợ lý AI", 
+    "⏱️ Draft for POB", 
+    "📅 Max Draft Table"
+])
 
-# ----------------- TAB 1: TRỢ LÝ AI -----------------
+# ----------------- TAB 1: POB AND DRAFT -----------------
+with tab_pob_draft:
+    col1, col2 = st.columns(2)
+    bay_gio = get_vn_time()
+    gio_mac_dinh = time(bay_gio.hour, 0)
+    
+    with col1:
+        mon_nuoc = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t1_mon")
+        ngay_pob = st.date_input("Ngày POB", bay_gio.date(), format="DD/MM/YYYY", key="t1_ngay")
+        gio_pob = st.time_input("Giờ POB", gio_mac_dinh, key="t1_gio")
+    with col2:
+        huong_di = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t1_huong")
+        tuyen_luong = st.radio("Tuyến luồng (Route)", list(ROUTES[huong_di].keys()), key="t1_tuyen")
+
+    if st.button("🚀 KIỂM TRA ĐIỀU KIỆN AN TOÀN", use_container_width=True, key="btn_t1"):
+        pob_t = datetime.combine(ngay_pob, gio_pob)
+        st.markdown(f"### 📊 KẾT QUẢ: {tuyen_luong}")
+        pts = ROUTES[huong_di][tuyen_luong]
+        cols = st.columns(len(pts))
+        for i, (p, h) in enumerate(pts.items()):
+            eta = pob_t + timedelta(hours=h)
+            req, _ = tinh_ukc(mon_nuoc, eta) 
+            with cols[i]:
+                t_h = noi_suy_thuy_trieu(data_dict[p], eta) 
+                if t_h is not None:
+                    act = lam_tron_hang_hai(CHANNEL_DEPTHS[p] + t_h)
+                    if act >= req: st.success(f"📍 {p}: ✅ LỌT")
+                    else: st.error(f"📍 {p}: ❌ CẠN")
+                    st.write(f"🕒 ETA: {eta.strftime('%H:%M %d/%b')}")
+                    st.write(f"📏 Yêu cầu: {req:.1f}m | 🌊 TT: {act:.1f}m")
+                    st.caption(f"(Luồng {CHANNEL_DEPTHS[p]}m + Triều {t_h:.1f}m)")
+
+# ----------------- TAB 2: TRỢ LÝ AI -----------------
 with tab_ai:
     if not HAS_AI or not API_KEY:
         st.error("⚠️ Lỗi: Chưa cấu hình đúng thư viện AI hoặc mất kết nối tới API Key (Két sắt Secrets).")
@@ -317,7 +336,7 @@ with tab_ai:
                     
                     st.session_state.chat_session = ai_model.start_chat(history=[
                         {"role": "user", "parts": [sys_instruct]},
-                        {"role": "model", "parts": ["Đã rõ. Tôi sẽ báo cáo cực kỳ ngắn gọn, chốt ngay kết quả lọt/cạn và khung giờ an toàn theo 3 ý bắt buộc, không phân tích dài dòng."]}
+                        {"role": "model", "parts": ["Đã rõ thưa Thuyền trưởng. Tôi đã nạp bản đồ luồng tuyến chuẩn xác và sẽ báo cáo kết quả theo đúng 3 ý yêu cầu, không phân tích rườm rà. Xin chờ lệnh!"]}
                     ])
                 except Exception as e:
                     st.error(f"Lỗi khởi tạo AI: {e}")
@@ -340,92 +359,7 @@ with tab_ai:
                         except Exception as e:
                             st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
 
-# ----------------- TAB 2: POB AND DRAFT -----------------
-with tab_pob_draft:
-    col1, col2 = st.columns(2)
-    bay_gio = get_vn_time()
-    gio_mac_dinh = time(bay_gio.hour, 0)
-    
-    with col1:
-        mon_nuoc = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t1_mon")
-        ngay_pob = st.date_input("Ngày POB", bay_gio.date(), format="DD/MM/YYYY", key="t1_ngay")
-        gio_pob = st.time_input("Giờ POB", gio_mac_dinh, key="t1_gio")
-    with col2:
-        huong_di = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t1_huong")
-        tuyen_luong = st.radio("Tuyến luồng (Route)", list(ROUTES[huong_di].keys()), key="t1_tuyen")
-
-    if st.button("🚀 KIỂM TRA ĐIỀU KIỆN AN TOÀN", use_container_width=True, key="btn_t1"):
-        pob_t = datetime.combine(ngay_pob, gio_pob)
-        st.markdown(f"### 📊 KẾT QUẢ: {tuyen_luong}")
-        pts = ROUTES[huong_di][tuyen_luong]
-        cols = st.columns(len(pts))
-        for i, (p, h) in enumerate(pts.items()):
-            eta = pob_t + timedelta(hours=h)
-            req, ukc_pct = tinh_ukc(mon_nuoc, eta) 
-            with cols[i]:
-                t_h = noi_suy_thuy_trieu(data_dict[p], eta) 
-                if t_h is not None:
-                    act = lam_tron_hang_hai(CHANNEL_DEPTHS[p] + t_h)
-                    if act >= req: st.success(f"📍 {p}: ✅ LỌT")
-                    else: st.error(f"📍 {p}: ❌ CẠN")
-                    st.write(f"🕒 ETA: {eta.strftime('%H:%M %d/%b')}")
-                    st.write(f"📏 Yêu cầu: {req:.1f}m | 🌊 TT: {act:.1f}m")
-                    st.caption(f"(Luồng {CHANNEL_DEPTHS[p]}m + Triều {t_h:.1f}m)")
-
-# ----------------- TAB 3: MAX DRAFT TABLE -----------------
-with tab_max_draft:
-    bay_gio_t2 = get_vn_time()
-    col_th, col_ck, col_tu = st.columns([1, 1, 2])
-    with col_th: 
-        thang_ch = st.selectbox("Tháng", list(range(1, 13)), bay_gio_t2.month - 1)
-    with col_ck: 
-        show_old = st.checkbox("Hiện ngày đã qua", value=False)
-    with col_tu: 
-        diem_options = ['HL6', 'HL21', 'HL27', 'Vàm Láng', 'TC Hiệp Phước', 'Bờ Băng']
-        tu_sel = st.multiselect("Điểm cạn", diem_options, default=['HL6', 'HL27'])
-
-    bang_raw = tao_bang_mon_nuoc_toi_da(data_dict, thang_ch)
-    if not bang_raw.empty:
-        df_f = bang_raw.copy()
-        if thang_ch == bay_gio_t2.month and not show_old: df_f = df_f[df_f['Ngay_Goc'] >= bay_gio_t2.day]
-        
-        rev_map = {'HL6': 'HL6', 'HL21': 'HL21', 'HL27': 'HL27', 'VL': 'Vàm Láng', 'TCHP': 'TC Hiệp Phước', 'BB': 'Bờ Băng'}
-        df_f['Điểm'] = df_f['Điểm'].map(rev_map)
-        
-        if tu_sel:
-            df_f = df_f[df_f['Điểm'].isin(tu_sel)]
-        else:
-            df_f = df_f[df_f['Điểm'].isin([])]
-
-        ngay_list = df_f['Ngày'].tolist()
-        new_ngay = []
-        last_d, h_char, global_cnt = None, '\u200b', 1
-        for d in ngay_list:
-            if d != last_d: new_ngay.append(d); last_d = d
-            else: new_ngay.append(h_char * global_cnt); global_cnt += 1
-        df_f['Ngày'] = new_ngay
-        
-        if not df_f.empty:
-            df_disp = df_f.drop(columns=['Ngay_Goc']).set_index(['Ngày', 'Điểm'])
-
-            def apply_st(df):
-                stys = pd.DataFrame('', index=df.index, columns=df.columns)
-                for i in range(len(df)):
-                    if "Sun" in ngay_list[i]: stys.iloc[i, :] = 'background-color: rgba(255, 75, 75, 0.15); color: #ff4b4b; font-weight: bold;'
-                return stys
-                
-            def style_idx(val):
-                if val in ['HL6','HL21','HL27']: return 'color: #33ccff; font-weight: bold;'
-                if val in ['Vàm Láng','Bờ Băng','TC Hiệp Phước']: return 'color: #ff9933; font-weight: bold;'
-                return 'font-weight: bold;'
-                
-            styled_df = df_disp.style.apply(apply_st, axis=None).map_index(style_idx, axis=0)
-            st.dataframe(styled_df, use_container_width=True, height=600)
-            st.download_button("📥 Tải Bảng (CSV)", df_f.drop(columns=['Ngay_Goc']).to_csv(index=False, encoding='utf-8-sig'), f"Tide_{thang_ch}.csv", "text/csv")
-        else:
-            st.info("Vui lòng chọn ít nhất một điểm để hiển thị dữ liệu.")
-
-# ----------------- TAB 4: DRAFT FOR POB -----------------
+# ----------------- TAB 3: DRAFT FOR POB -----------------
 with tab_draft_pob:
     col3_1, col3_2 = st.columns(2)
     bay_gio_t3 = get_vn_time()
@@ -641,6 +575,59 @@ with tab_draft_pob:
                     st.write("Không có dữ liệu")
                 st.markdown("</div>", unsafe_allow_html=True)
 
+# ----------------- TAB 4: MAX DRAFT TABLE -----------------
+with tab_max_draft:
+    bay_gio_t2 = get_vn_time()
+    col_th, col_ck, col_tu = st.columns([1, 1, 2])
+    with col_th: 
+        thang_ch = st.selectbox("Tháng", list(range(1, 13)), bay_gio_t2.month - 1)
+    with col_ck: 
+        show_old = st.checkbox("Hiện ngày đã qua", value=False)
+    with col_tu: 
+        diem_options = ['HL6', 'HL21', 'HL27', 'Vàm Láng', 'TC Hiệp Phước', 'Bờ Băng']
+        tu_sel = st.multiselect("Điểm cạn", diem_options, default=['HL6', 'HL27'])
+
+    bang_raw = tao_bang_mon_nuoc_toi_da(data_dict, thang_ch)
+    if not bang_raw.empty:
+        df_f = bang_raw.copy()
+        if thang_ch == bay_gio_t2.month and not show_old: df_f = df_f[df_f['Ngay_Goc'] >= bay_gio_t2.day]
+        
+        rev_map = {'HL6': 'HL6', 'HL21': 'HL21', 'HL27': 'HL27', 'VL': 'Vàm Láng', 'TCHP': 'TC Hiệp Phước', 'BB': 'Bờ Băng'}
+        df_f['Điểm'] = df_f['Điểm'].map(rev_map)
+        
+        if tu_sel:
+            df_f = df_f[df_f['Điểm'].isin(tu_sel)]
+        else:
+            df_f = df_f[df_f['Điểm'].isin([])]
+
+        ngay_list = df_f['Ngày'].tolist()
+        new_ngay = []
+        last_d, h_char, global_cnt = None, '\u200b', 1
+        for d in ngay_list:
+            if d != last_d: new_ngay.append(d); last_d = d
+            else: new_ngay.append(h_char * global_cnt); global_cnt += 1
+        df_f['Ngày'] = new_ngay
+        
+        if not df_f.empty:
+            df_disp = df_f.drop(columns=['Ngay_Goc']).set_index(['Ngày', 'Điểm'])
+
+            def apply_st(df):
+                stys = pd.DataFrame('', index=df.index, columns=df.columns)
+                for i in range(len(df)):
+                    if "Sun" in ngay_list[i]: stys.iloc[i, :] = 'background-color: rgba(255, 75, 75, 0.15); color: #ff4b4b; font-weight: bold;'
+                return stys
+                
+            def style_idx(val):
+                if val in ['HL6','HL21','HL27']: return 'color: #33ccff; font-weight: bold;'
+                if val in ['Vàm Láng','Bờ Băng','TC Hiệp Phước']: return 'color: #ff9933; font-weight: bold;'
+                return 'font-weight: bold;'
+                
+            styled_df = df_disp.style.apply(apply_st, axis=None).map_index(style_idx, axis=0)
+            st.dataframe(styled_df, use_container_width=True, height=600)
+            st.download_button("📥 Tải Bảng (CSV)", df_f.drop(columns=['Ngay_Goc']).to_csv(index=False, encoding='utf-8-sig'), f"Tide_{thang_ch}.csv", "text/csv")
+        else:
+            st.info("Vui lòng chọn ít nhất một điểm để hiển thị dữ liệu.")
+
 # ==========================================
 # DISCLAIMER PHÁP LÝ CHUẨN QUỐC TẾ
 # ==========================================
@@ -650,4 +637,3 @@ st.markdown("""
     This application and its underlying algorithms were independently developed by <strong>NP44</strong>. All data, calculations, and information provided herein are for informational and reference purposes only and are strictly non-commercial. The creator (NP44) makes no warranties, expressed or implied, regarding the accuracy, adequacy, validity, reliability, or completeness of any information provided. Under no circumstance shall the creator incur any liability for any loss, damage, or legal consequence arising directly or indirectly from the reliance on or external application of this tool's outputs. Users bear full and sole responsibility for any maritime, navigational, or operational decisions made.
 </div>
 """, unsafe_allow_html=True)
-
