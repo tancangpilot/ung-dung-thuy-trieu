@@ -29,6 +29,7 @@ CHANNEL_DEPTHS = {
     'VL': 8.0, 'TCHP': 8.0, 'BB': 6.7
 }
 
+# ĐÃ CẬP NHẬT LẠI THỜI GIAN ĐI TỚI VÀM LÁNG (VL: 2.5h) CHO TUYẾN SỐ 4
 ROUTES = {
     "ĐI VÀO (INBOUND)": {
         "P0 Vũng Tàu - Lòng Tàu - Cát Lái": {'HL27': 2.0, 'HL21': 2.5, 'HL6': 4.0},
@@ -36,7 +37,7 @@ ROUTES = {
     },
     "ĐI RA (OUTBOUND)": {
         "Cát Lái - Lòng Tàu - P0 Vũng Tàu": {'HL6': 0.5, 'HL21': 2.0, 'HL27': 2.5},
-        "Cát Lái - Soài Rạp (Bờ Băng) - P0 SR (H25)": {'BB': 1.0, 'VL': 2.0},
+        "Cát Lái - Soài Rạp (Bờ Băng) - P0 SR (H25)": {'BB': 1.0, 'VL': 2.5},
         "TC Hiệp Phước - Soài Rạp (Vàm Láng) - P0 SR (H25)": {'TCHP': 0.5, 'VL': 1.5}
     }
 }
@@ -178,7 +179,7 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# KHỞI TẠO AI CHATBOT 
+# KHỞI TẠO AI CHATBOT (CHUẨN ĐỊA LÝ & YÊU CẦU NGẮN GỌN)
 # ==========================================
 @st.cache_resource
 def get_ai_bot(_extremes_list, api_key):
@@ -186,6 +187,7 @@ def get_ai_bot(_extremes_list, api_key):
     
     almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in _extremes_list]) if _extremes_list else "Không có dữ liệu triều."
 
+    # ĐÃ ĐIỀU CHỈNH LẠI THÔNG SỐ VÀM LÁNG CHO TUYẾN CL-SR THÀNH 2.5H
     system_instruction = f"""
     Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). Bạn là người ra quyết định chuyên nghiệp.
     
@@ -195,7 +197,7 @@ def get_ai_bot(_extremes_list, api_key):
        - "P0 SR (H25) - Soài Rạp - TC Hiệp Phước": Qua Vàm Láng/VL (sau 1.5h), TC Hiệp Phước/TCHP (sau 3h).
     2. ĐI RA (OUTBOUND):
        - "Cát Lái - Lòng Tàu - P0 Vũng Tàu": Qua HL6 (sau 0.5h), HL21 (sau 2h), HL27 (sau 2.5h).
-       - "Cát Lái - Soài Rạp (Bờ Băng) - P0 SR (H25)": Qua Bờ Băng/BB (sau 1h), Vàm Láng/VL (sau 2h).
+       - "Cát Lái - Soài Rạp (Bờ Băng) - P0 SR (H25)": Qua Bờ Băng/BB (sau 1h), Vàm Láng/VL (sau 2.5h).
        - "TC Hiệp Phước - Soài Rạp (Vàm Láng) - P0 SR (H25)": Qua TCHP (sau 0.5h), Vàm Láng/VL (sau 1.5h).
 
     THÔNG SỐ BẮT BUỘC:
@@ -298,7 +300,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 TAN CANG PILOT TIDE CALCULATION")
+st.title("🚢 SNP Tide Caculation")
 
 st.markdown("""
 <div style="font-size: 0.65em; margin-bottom: 20px; padding: 10px; background-color: rgba(128,128,128,0.1); border-radius: 5px; opacity: 0.9;">
@@ -316,10 +318,10 @@ if data_dict is None:
 
 # ĐÃ SẮP XẾP LẠI THỨ TỰ TABS THEO ĐÚNG YÊU CẦU CỦA BẠN
 tab_pob_draft, tab_ai, tab_draft_pob, tab_max_draft = st.tabs([
-    "🚀 POB and Draft", 
-    "🤖 Trợ lý AI", 
-    "⏱️ Draft for POB", 
-    "📅 Max Draft Table"
+    "POB and Draft", 
+    "🤖Trợ lý AI", 
+    "Draft for POB", 
+    "📅Max Draft Table"
 ])
 
 # ----------------- TAB 1: POB AND DRAFT -----------------
