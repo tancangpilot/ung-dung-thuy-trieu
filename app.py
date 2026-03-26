@@ -157,7 +157,6 @@ def process_slack_windows_original():
         col_time_orig = 'HL Water'
         col_level = 'Level(m)'
         
-        # Đề phòng tên cột trong file bị lệch
         if col_time_orig not in df.columns:
             df.columns = ['Date', 'HL Water', 'Level(m)'] + list(df.columns[3:])
 
@@ -176,7 +175,7 @@ def process_slack_windows_original():
         df['Event_Datetime'] = base_dts
         df_clean = df.dropna(subset=['Event_Datetime', col_level]).sort_values('Event_Datetime').reset_index(drop=True)
 
-        # 4. LỌC BÓNG MA V2 (Giữ nguyên gốc)
+        # 4. LỌC BÓNG MA V2 
         df_clean['Amplitude'] = abs(df_clean[col_level] - df_clean[col_level].shift(1))
         df_clean['Ký hiệu'] = np.where(df_clean[col_level] > df_clean[col_level].shift(1), 'HW', 'LW')
 
@@ -384,7 +383,7 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# KHỞI TẠO AI CHATBOT (BƠM DỮ LIỆU WINDOW MỚI)
+# KHỞI TẠO AI CHATBOT 
 # ==========================================
 @st.cache_resource
 def get_ai_bot(_df_calc, api_key):
@@ -486,7 +485,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 TAN CANG PILOT V3.1")
+st.title("🚢 TAN CANG PILOT V3.2")
 
 st.markdown("""
 <div style="font-size: 0.65em; margin-bottom: 20px; padding: 10px; background-color: rgba(128,128,128,0.1); border-radius: 5px; opacity: 0.9;">
@@ -574,7 +573,7 @@ with tab_ai:
                         except Exception as e:
                             st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
 
-# ----------------- TAB 3: DRAFT FOR POB (SỬ DỤNG LÕI WINDOW CHUẨN) -----------------
+# ----------------- TAB 3: DRAFT FOR POB -----------------
 with tab_draft_pob:
     col3_1, col3_2 = st.columns(2)
     bay_gio_t3 = get_vn_time()
@@ -610,7 +609,6 @@ with tab_draft_pob:
                 is_safe = True
                 ly_do = ""
                 
-                # Quét lọt mớn
                 for p, travel_h in pts.items():
                     if p not in data_dict:
                         is_safe, ly_do = False, f"Thiếu dữ liệu {p}"; break
@@ -629,7 +627,6 @@ with tab_draft_pob:
                         is_safe, ly_do = False, f"Cạn tại {p} (Thiếu {-clearance:.1f}m)"
                         break
                             
-                # Đối chiếu Window
                 is_in_window = False
                 window_note = "N/A"
                 
@@ -727,18 +724,9 @@ with tab_max_draft:
         else:
             st.info("Vui lòng chọn ít nhất một điểm để hiển thị dữ liệu.")
 
-# ----------------- TAB 5: SLACK WATER WINDOW (TÍNH TỪ LÕI GỐC) -----------------
+# ----------------- TAB 5: SLACK WATER WINDOW (PANDAS STYLER + RELAY) -----------------
 with tab_window:
-    st.markdown("""
-    <style>
-        .tag-hw { background-color: #e3f2fd; color: #007bff; padding: 4px 10px; border-radius: 12px; font-weight: bold; border: 1px solid #007bff; display: inline-block; text-align: center; }
-        .tag-lw { background-color: #fce4e4; color: #dc3545; padding: 4px 10px; border-radius: 12px; font-weight: bold; border: 1px solid #dc3545; display: inline-block; text-align: center; }
-        .tag-dir-in { background-color: #e8f8f5; color: #117a65; font-size: 1.2em; font-weight: bold; border-radius: 50%; padding: 0 5px; }
-        .tag-dir-out { background-color: #fef9e7; color: #d35400; font-size: 1.2em; font-weight: bold; border-radius: 50%; padding: 0 5px; }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    col_win_1, col_win_2 = st.columns([2, 8])
+    col_win_1, col_win_2 = st.columns([1.2, 8.8])
     with col_win_1:
         st.markdown("<p style='margin-top: 10px; font-weight: bold; font-size: 16px;'>🔄 Chế độ hiển thị:</p>", unsafe_allow_html=True)
     with col_win_2:
@@ -758,31 +746,82 @@ with tab_window:
     if df_slack.empty:
         st.warning("Không có dữ liệu Window. Vui lòng kiểm tra lại file Excel (Sheet HLW-VT).")
     else:
-        df_show = df_slack[(df_slack['Event_Datetime'] >= start) & (df_slack['Event_Datetime'] <= end)].copy()
+        df_show = df_slack[(df_slack['Event_Datetime'] >= start) & (df_slack['Event_Datetime'] <= end)].copy().reset_index(drop=True)
         
+        # Format chuẩn lại các cột theo yêu cầu
         df_show['Date'] = df_show['Event_Datetime'].dt.strftime('%d/%m/%Y')
         df_show.loc[df_show['Date'] == df_show['Date'].shift(), 'Date'] = ""
-        df_show['Vũng Tàu'] = df_show['Event_Datetime'].dt.strftime('%H:%M') + "<br><b>" + df_show['Level(m)'].astype(str) + "m</b>"
+        df_show['Time'] = df_show['Event_Datetime'].dt.strftime('%H:%M')
+        df_show['HLW Vung Tau'] = df_show['Ký hiệu']
+        df_show['Level(m)'] = df_show['Level(m)'].map('{:.1f}'.format)
         
-        df_show['Type'] = df_show['Ký hiệu'].apply(lambda x: f"<div class='tag-hw'>{x}</div>" if x == 'HW' else f"<div class='tag-lw'>{x}</div>")
-        df_show['Dir Tag'] = df_show['Dir'].apply(lambda x: f"<span class='tag-dir-in'>{x}</span>" if x == '↙' else f"<span class='tag-dir-out'>{x}</span>")
+        df_show['Begin Window'] = df_show.apply(lambda r: format_win_str(r['B_CL'], r['Event_Datetime']), axis=1)
+        df_show['End Window'] = df_show.apply(lambda r: format_win_str(r['E_CL'], r['Event_Datetime']), axis=1)
         
-        df_show['Slack CL'] = df_show['Slack CL'].apply(lambda x: f"<b>{x}</b>")
-        df_show['Slack CM'] = df_show['Slack CM'].apply(lambda x: f"<b>{x}</b>")
-        
-        df_show['Win Cát Lái'] = df_show.apply(lambda r: f"{format_win_str(r['B_CL'], r['Event_Datetime'])} - {format_win_str(r['E_CL'], r['Event_Datetime'])}", axis=1)
-        df_show['Win CM(Lớn)'] = df_show.apply(lambda r: f"{format_win_str(r['B_CM1'], r['Event_Datetime'])} - {format_win_str(r['E_CM1'], r['Event_Datetime'])}", axis=1)
-        df_show['Win CM(Nhỏ)'] = df_show.apply(lambda r: f"{format_win_str(r['B_CM2'], r['Event_Datetime'])} - {format_win_str(r['E_CM2'], r['Event_Datetime'])}", axis=1)
+        df_show['Begin Tàu Lớn (1.5)'] = df_show.apply(lambda r: format_win_str(r['B_CM1'], r['Event_Datetime']), axis=1)
+        df_show['End Tàu Lớn (1.0)'] = df_show.apply(lambda r: format_win_str(r['E_CM1'], r['Event_Datetime']), axis=1)
+        df_show['Begin Tàu Nhỏ (2.3)'] = df_show.apply(lambda r: format_win_str(r['B_CM2'], r['Event_Datetime']), axis=1)
+        df_show['End Tàu Nhỏ (1.6)'] = df_show.apply(lambda r: format_win_str(r['E_CM2'], r['Event_Datetime']), axis=1)
+
+        # Hàm Style bôi màu Styler gốc của bạn (Có tính năng Relay Race)
+        def style_tab_table(styler, sel_cols):
+            def highlight_new_day(row):
+                if 'Date' in row.index and row['Date'] != "":
+                    return ['background-color: #fff8e1; border-top: 1.5px solid #f1c40f;'] * len(row)
+                return [''] * len(row)
+            styler.apply(highlight_new_day, axis=1)
+
+            if 'HLW Vung Tau' in sel_cols:
+                styler.map(lambda x: 'color: #007bff; font-weight: bold;' if x == 'HW' else ('color: #dc3545; font-weight: bold;' if x == 'LW' else ''), subset=['HLW Vung Tau'])
+            
+            if 'Slack' in sel_cols:
+                styler.map(lambda x: 'background-color: #e8f8f5; font-weight: bold; color: #1c2833; font-size: 15px;' if x != "-" else '', subset=['Slack'])
+            
+            if 'Dir' in sel_cols:
+                styler.map(lambda x: 'font-weight: bold; color: #007bff; font-size: 22px;' if '↙' in str(x) else ('font-weight: bold; color: #dc3545; font-size: 22px;' if '↗' in str(x) else ''), subset=['Dir'])
+            
+            # Thuật toán tô màu thông dòng (Relay Race)
+            def highlight_relay(data):
+                css = pd.DataFrame('', index=data.index, columns=data.columns)
+                pairs = [
+                    ('Begin Window', 'End Window'), 
+                    ('Begin Tàu Lớn (1.5)', 'End Tàu Lớn (1.0)'), 
+                    ('Begin Tàu Nhỏ (2.3)', 'End Tàu Nhỏ (1.6)')
+                ]
+                for b_col, e_col in pairs:
+                    if b_col in data.columns and e_col in data.columns:
+                        for c in [b_col, e_col]:
+                            css[c] = np.where(data[c] != "-", 'background-color: #fdf2e9; font-weight: bold; color: #d35400;', '')
+                            
+                        indices = data.index.tolist()
+                        for i in range(1, len(indices)):
+                            idx_prev = indices[i-1]
+                            idx_curr = indices[i]
+                            if idx_curr == idx_prev + 1:
+                                prev_end = data.loc[idx_prev, e_col]
+                                curr_begin = data.loc[idx_curr, b_col]
+                                if prev_end == curr_begin and prev_end != "-":
+                                    relay_style = 'background-color: #d4edda; font-weight: 900; color: #0e6655; font-size: 15px; border-bottom: 2px solid #28b463;'
+                                    css.loc[idx_prev, e_col] = relay_style
+                                    css.loc[idx_curr, b_col] = relay_style
+                return css
+
+            styler.apply(highlight_relay, axis=None)
+            return styler
 
         tab_view_cl, tab_view_cm = st.tabs(["⚓ TRẠM CÁT LÁI", "🚢 TRẠM CÁI MÉP"])
         
         with tab_view_cl:
-            disp_cl = df_show[['Date', 'Type', 'Vũng Tàu', 'Dir Tag', 'Slack CL', 'Win Cát Lái']]
-            st.write(disp_cl.to_html(escape=False, index=False, classes="tide-table"), unsafe_allow_html=True)
+            f_cl = df_show.copy()
+            f_cl['Slack'] = f_cl['Slack CL']
+            sel_cl = ['Date', 'HLW Vung Tau', 'Time', 'Level(m)', 'Slack', 'Dir', 'Begin Window', 'End Window']
+            st.dataframe(style_tab_table(f_cl[sel_cl].style, sel_cl), use_container_width=True, hide_index=True, height=600)
             
         with tab_view_cm:
-            disp_cm = df_show[['Date', 'Type', 'Vũng Tàu', 'Dir Tag', 'Slack CM', 'Win CM(Lớn)', 'Win CM(Nhỏ)']]
-            st.write(disp_cm.to_html(escape=False, index=False, classes="tide-table"), unsafe_allow_html=True)
+            f_cm = df_show.copy()
+            f_cm['Slack'] = f_cm['Slack CM']
+            sel_cm = ['Date', 'HLW Vung Tau', 'Time', 'Level(m)', 'Slack', 'Dir', 'Begin Tàu Lớn (1.5)', 'End Tàu Lớn (1.0)', 'Begin Tàu Nhỏ (2.3)', 'End Tàu Nhỏ (1.6)']
+            st.dataframe(style_tab_table(f_cm[sel_cm].style, sel_cm), use_container_width=True, hide_index=True, height=600)
 
 # ==========================================
 # DISCLAIMER PHÁP LÝ CHUẨN QUỐC TẾ
