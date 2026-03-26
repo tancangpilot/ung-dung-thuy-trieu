@@ -108,7 +108,7 @@ def noi_suy_thuy_trieu(df_tide, eta_time):
     except: return None
 
 # ==========================================
-# LÕI THUẬT TOÁN WINDOW (BẢN GỐC 100% CỦA BẠN)
+# LÕI THUẬT TOÁN WINDOW CHUẨN GỐC
 # ==========================================
 @st.cache_data
 def process_slack_windows_original():
@@ -439,10 +439,29 @@ def get_ai_bot(_df_calc, api_key):
     model = genai.GenerativeModel(chosen_model)
     return model, chosen_model, system_instruction
 
+
 # ==========================================
-# GIAO DIỆN WEB (UI)
+# GIAO DIỆN WEB (UI) THIẾT LẬP SESSION STATE ĐỒNG BỘ
 # ==========================================
 st.set_page_config(page_title="Tan Cang Pilot Tide Calculation", layout="wide", initial_sidebar_state="collapsed")
+
+# KHAI BÁO BIẾN THỜI GIAN TOÀN CỤC CHUNG (Tránh lỗi NameError)
+bay_gio = get_vn_time()
+
+# 1. Khởi tạo biến lưu ngày dùng chung cho toàn App
+if "shared_date" not in st.session_state:
+    st.session_state.shared_date = bay_gio.date()
+
+# 2. Hàm gọi ngược (Callback) để cập nhật ngày mốc khi đổi ngày ở các Tab
+def update_shared_date_from_t1():
+    st.session_state.shared_date = st.session_state.t1_ngay
+
+def update_shared_date_from_t2():
+    st.session_state.shared_date = st.session_state.t3_ngay
+
+def update_shared_date_from_t5():
+    st.session_state.shared_date = st.session_state.t5_ngay
+
 
 df_slack = process_slack_windows_original()
 data_dict = load_tide_data()
@@ -485,7 +504,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 TAN CANG PILOT V3.2")
+st.title("🚢 TAN CANG PILOT V3.5")
 
 st.markdown("""
 <div style="font-size: 0.65em; margin-bottom: 20px; padding: 10px; background-color: rgba(128,128,128,0.1); border-radius: 5px; opacity: 0.9;">
@@ -494,13 +513,48 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ==========================================
+# BẢNG TÓM TẮT 3 NGÀY (SỬ DỤNG NGÀY ĐỒNG BỘ SHARED_DATE)
+# ==========================================
+if not df_slack.empty:
+    today_date = st.session_state.shared_date
+    dates_3day = [today_date - timedelta(days=1), today_date, today_date + timedelta(days=1)]
+    titles_3day = ["Yesterday", "Today", "Tomorrow"]
+    
+    cols_3day = st.columns(3)
+    for i, d in enumerate(dates_3day):
+        with cols_3day[i]:
+            df_day = df_slack[df_slack['Event_Datetime'].dt.date == d]
+            html = f"<div style='border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; margin-bottom: 15px;'>"
+            html += f"<div style='background-color: #f8f9fa; padding: 8px; text-align: center; font-weight: bold; border-bottom: 1px solid #e0e0e0;'>{titles_3day[i]} ({d.strftime('%d/%m')})</div>"
+            html += "<table style='width: 100%; text-align: center; border-collapse: collapse; font-size: 0.9em;'>"
+            html += "<tr style='background-color: #ffffff; color: #555; border-bottom: 1px solid #e0e0e0;'><th>HLW Vung Tau</th><th>Time</th><th>Level(m)</th><th>Slack</th><th>Dir</th></tr>"
+
+            if not df_day.empty:
+                for _, r in df_day.iterrows():
+                    bg_color = "#e6f2ff" if r['Ký hiệu'] == "HW" else "#ffe6e6"
+                    txt_color = "#007bff" if r['Ký hiệu'] == "HW" else "#dc3545"
+                    
+                    html += f"<tr style='background-color: {bg_color}; color: {txt_color}; font-weight: bold; border-bottom: 1px solid #ffffff;'>"
+                    html += f"<td style='padding: 6px;'>{r['Ký hiệu']}</td>"
+                    html += f"<td>{r['Event_Datetime'].strftime('%H:%M')}</td>"
+                    html += f"<td>{r['Level(m)']:.1f}m</td>"
+                    html += f"<td>{r['Slack CL']}</td>"
+                    html += f"<td>{r['Dir']}</td>"
+                    html += "</tr>"
+            else:
+                html += "<tr><td colspan='5' style='padding: 10px; color: gray;'>Không có dữ liệu</td></tr>"
+            html += "</table></div>"
+            st.markdown(html, unsafe_allow_html=True)
+
+
 if data_dict is None or df_slack.empty:
     st.error(f"⚠️ Thiếu file hoặc dữ liệu {FILE_EXCEL} không hợp lệ!"); st.stop()
 
-tab_pob_draft, tab_ai, tab_draft_pob, tab_max_draft, tab_window = st.tabs([
-    "🚀 POB and Draft", 
-    "🤖 Trợ lý AI", 
+tab_pob_draft, tab_draft_pob, tab_ai, tab_max_draft, tab_window = st.tabs([
+    "🚀 POB & Draft", 
     "⏱️ Draft for POB", 
+    "🤖 Trợ lý AI", 
     "📅 Max Draft Table",
     "🌊 Slack Water Window"
 ])
@@ -508,13 +562,19 @@ tab_pob_draft, tab_ai, tab_draft_pob, tab_max_draft, tab_window = st.tabs([
 # ----------------- TAB 1: POB AND DRAFT -----------------
 with tab_pob_draft:
     col1, col2 = st.columns(2)
-    bay_gio = get_vn_time()
-    gio_mac_dinh = time(bay_gio.hour, 0)
     
     with col1:
         mon_nuoc = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t1_mon")
-        ngay_pob = st.date_input("Ngày POB", bay_gio.date(), format="DD/MM/YYYY", key="t1_ngay")
-        gio_pob = st.time_input("Giờ POB", gio_mac_dinh, key="t1_gio")
+        # Sử dụng on_change để tự động đồng bộ ngày
+        ngay_pob = st.date_input("Ngày POB", value=st.session_state.shared_date, format="DD/MM/YYYY", key="t1_ngay", on_change=update_shared_date_from_t1)
+        
+        # Tạo danh sách các block 30 phút
+        time_blocks = [time(h, m) for h in range(24) for m in (0, 30)]
+        # Tính toán để gợi ý block 30 phút gần nhất làm mặc định
+        default_index = bay_gio.hour * 2 + (1 if bay_gio.minute >= 30 else 0)
+        
+        gio_pob = st.selectbox("Giờ POB", options=time_blocks, index=default_index, format_func=lambda t: t.strftime('%H:%M'), key="t1_gio")
+        
     with col2:
         huong_di = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t1_huong")
         tuyen_luong = st.radio("Tuyến luồng (Route)", list(ROUTES[huong_di].keys()), key="t1_tuyen")
@@ -537,50 +597,14 @@ with tab_pob_draft:
                     st.write(f"📏 Yêu cầu: {req:.1f}m | 🌊 TT: {act:.1f}m")
                     st.caption(f"(Luồng {CHANNEL_DEPTHS[p]}m + Triều {t_h:.1f}m)")
 
-# ----------------- TAB 2: TRỢ LÝ AI -----------------
-with tab_ai:
-    if not HAS_AI or not API_KEY:
-        st.error("⚠️ Lỗi: Chưa cấu hình đúng thư viện AI hoặc mất kết nối tới API Key (Két sắt Secrets).")
-    else:
-        st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
-        
-        if "chat_session" not in st.session_state:
-            with st.spinner("Đang khởi động AI & Tích hợp thuật toán Slack Water..."):
-                try:
-                    ai_model, model_name, sys_instruct = get_ai_bot(df_slack, API_KEY)
-                    st.session_state.chat_session = ai_model.start_chat(history=[
-                        {"role": "user", "parts": [sys_instruct]},
-                        {"role": "model", "parts": ["Đã rõ thưa Thuyền trưởng. Báo cáo chốt lọt/cạn và giờ Window chuẩn xác. Xin lệnh!"]}
-                    ])
-                except Exception as e:
-                    st.error(f"Lỗi khởi tạo AI: {e}")
-
-        if "chat_session" in st.session_state:
-            for message in st.session_state.chat_session.history[2:]:
-                role = "user" if message.role == "user" else "assistant"
-                with st.chat_message(role):
-                    st.markdown(message.parts[0].text)
-
-            if user_prompt := st.chat_input("Nhập yêu cầu điều động (VD: Mớn 10.7m, đi Cát Lái ngày 25/03, giờ nào an toàn?)..."):
-                with st.chat_message("user"):
-                    st.markdown(user_prompt)
-                
-                with st.chat_message("assistant"):
-                    with st.spinner("Đang chéo bảng triều và cắt Window..."):
-                        try:
-                            response = st.session_state.chat_session.send_message(user_prompt)
-                            st.markdown(response.text)
-                        except Exception as e:
-                            st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
-
-# ----------------- TAB 3: DRAFT FOR POB -----------------
+# ----------------- TAB 2: DRAFT FOR POB -----------------
 with tab_draft_pob:
     col3_1, col3_2 = st.columns(2)
-    bay_gio_t3 = get_vn_time()
     
     with col3_1:
         mon_nuoc_t3 = st.number_input("Mớn nước (m)", 1.0, 20.0, 10.5, 0.1, key="t3_mon")
-        ngay_pob_t3 = st.date_input("Ngày POB", bay_gio_t3.date(), format="DD/MM/YYYY", key="t3_ngay")
+        # Sử dụng on_change để tự động đồng bộ ngày
+        ngay_pob_t3 = st.date_input("Ngày POB", value=st.session_state.shared_date, format="DD/MM/YYYY", key="t3_ngay", on_change=update_shared_date_from_t2)
     with col3_2:
         huong_di_t3 = st.radio("Hướng di chuyển", ["ĐI VÀO (INBOUND)", "ĐI RA (OUTBOUND)"], horizontal=True, key="t3_huong")
         tuyen_luong_t3 = st.radio("Tuyến luồng (Route)", list(ROUTES[huong_di_t3].keys()), key="t3_tuyen")
@@ -588,8 +612,7 @@ with tab_draft_pob:
     if st.button("⏱️ QUÉT TÌM GIỜ CHẠY TÀU", use_container_width=True, key="btn_t3"):
         st.markdown("---")
         pts = ROUTES[huong_di_t3][tuyen_luong_t3]
-        current_time_vn = get_vn_time()
-        rounded_now = current_time_vn.replace(minute=(0 if current_time_vn.minute < 30 else 30), second=0, microsecond=0)
+        rounded_now = bay_gio.replace(minute=(0 if bay_gio.minute < 30 else 30), second=0, microsecond=0)
 
         ket_qua = []
         khung_gio_hoan_hao = []
@@ -678,12 +701,47 @@ with tab_draft_pob:
             styled_kq = df_kq.style.map(color_status, subset=['Trạng thái'])
             st.dataframe(styled_kq, use_container_width=True, height=400)
 
+# ----------------- TAB 3: TRỢ LÝ AI -----------------
+with tab_ai:
+    if not HAS_AI or not API_KEY:
+        st.error("⚠️ Lỗi: Chưa cấu hình đúng thư viện AI hoặc mất kết nối tới API Key (Két sắt Secrets).")
+    else:
+        st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
+        
+        if "chat_session" not in st.session_state:
+            with st.spinner("Đang khởi động AI & Tích hợp thuật toán Slack Water..."):
+                try:
+                    ai_model, model_name, sys_instruct = get_ai_bot(df_slack, API_KEY)
+                    st.session_state.chat_session = ai_model.start_chat(history=[
+                        {"role": "user", "parts": [sys_instruct]},
+                        {"role": "model", "parts": ["Đã rõ thưa Thuyền trưởng. Báo cáo chốt lọt/cạn và giờ Window chuẩn xác. Xin lệnh!"]}
+                    ])
+                except Exception as e:
+                    st.error(f"Lỗi khởi tạo AI: {e}")
+
+        if "chat_session" in st.session_state:
+            for message in st.session_state.chat_session.history[2:]:
+                role = "user" if message.role == "user" else "assistant"
+                with st.chat_message(role):
+                    st.markdown(message.parts[0].text)
+
+            if user_prompt := st.chat_input("Nhập yêu cầu điều động (VD: Mớn 10.7m, đi Cát Lái ngày 25/03, giờ nào an toàn?)..."):
+                with st.chat_message("user"):
+                    st.markdown(user_prompt)
+                
+                with st.chat_message("assistant"):
+                    with st.spinner("Đang chéo bảng triều và cắt Window..."):
+                        try:
+                            response = st.session_state.chat_session.send_message(user_prompt)
+                            st.markdown(response.text)
+                        except Exception as e:
+                            st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
+
 # ----------------- TAB 4: MAX DRAFT TABLE -----------------
 with tab_max_draft:
-    bay_gio_t2 = get_vn_time()
     col_th, col_ck, col_tu = st.columns([1, 1, 2])
     with col_th: 
-        thang_ch = st.selectbox("Tháng", list(range(1, 13)), index=int(bay_gio_t2.month - 1))
+        thang_ch = st.selectbox("Tháng", list(range(1, 13)), index=int(bay_gio.month - 1))
     with col_ck: 
         show_old = st.checkbox("Hiện ngày đã qua", value=False)
     with col_tu: 
@@ -693,7 +751,7 @@ with tab_max_draft:
     bang_raw = tao_bang_mon_nuoc_toi_da(data_dict, thang_ch)
     if not bang_raw.empty:
         df_f = bang_raw.copy()
-        if thang_ch == bay_gio_t2.month and not show_old: df_f = df_f[df_f['Ngay_Goc'] >= bay_gio_t2.day]
+        if thang_ch == bay_gio.month and not show_old: df_f = df_f[df_f['Ngay_Goc'] >= bay_gio.day]
         rev_map = {'HL6': 'HL6', 'HL21': 'HL21', 'HL27': 'HL27', 'VL': 'Vàm Láng', 'TCHP': 'TC Hiệp Phước', 'BB': 'Bờ Băng'}
         df_f['Điểm'] = df_f['Điểm'].map(rev_map)
         
@@ -724,7 +782,7 @@ with tab_max_draft:
         else:
             st.info("Vui lòng chọn ít nhất một điểm để hiển thị dữ liệu.")
 
-# ----------------- TAB 5: SLACK WATER WINDOW (PANDAS STYLER + RELAY) -----------------
+# ----------------- TAB 5: SLACK WATER WINDOW -----------------
 with tab_window:
     col_win_1, col_win_2 = st.columns([1.2, 8.8])
     with col_win_1:
@@ -733,7 +791,8 @@ with tab_window:
         view = st.radio("Chế độ hiển thị", ("Week", "Month"), horizontal=True, label_visibility="collapsed")
         
     if view == "Week":
-        sel_d = st.date_input("🗓️ Chọn ngày mốc:", bay_gio.date())
+        # Đã đồng bộ ngày với các Tab khác thông qua on_change
+        sel_d = st.date_input("🗓️ Chọn ngày mốc:", value=st.session_state.shared_date, key="t5_ngay", on_change=update_shared_date_from_t5)
         start = pd.Timestamp(sel_d) - pd.Timedelta(days=1)
         end = start + pd.Timedelta(days=6)
     else:
@@ -748,7 +807,6 @@ with tab_window:
     else:
         df_show = df_slack[(df_slack['Event_Datetime'] >= start) & (df_slack['Event_Datetime'] <= end)].copy().reset_index(drop=True)
         
-        # Format chuẩn lại các cột theo yêu cầu
         df_show['Date'] = df_show['Event_Datetime'].dt.strftime('%d/%m/%Y')
         df_show.loc[df_show['Date'] == df_show['Date'].shift(), 'Date'] = ""
         df_show['Time'] = df_show['Event_Datetime'].dt.strftime('%H:%M')
@@ -763,7 +821,6 @@ with tab_window:
         df_show['Begin Tàu Nhỏ (2.3)'] = df_show.apply(lambda r: format_win_str(r['B_CM2'], r['Event_Datetime']), axis=1)
         df_show['End Tàu Nhỏ (1.6)'] = df_show.apply(lambda r: format_win_str(r['E_CM2'], r['Event_Datetime']), axis=1)
 
-        # Hàm Style bôi màu Styler gốc của bạn (Có tính năng Relay Race)
         def style_tab_table(styler, sel_cols):
             def highlight_new_day(row):
                 if 'Date' in row.index and row['Date'] != "":
@@ -780,7 +837,6 @@ with tab_window:
             if 'Dir' in sel_cols:
                 styler.map(lambda x: 'font-weight: bold; color: #007bff; font-size: 22px;' if '↙' in str(x) else ('font-weight: bold; color: #dc3545; font-size: 22px;' if '↗' in str(x) else ''), subset=['Dir'])
             
-            # Thuật toán tô màu thông dòng (Relay Race)
             def highlight_relay(data):
                 css = pd.DataFrame('', index=data.index, columns=data.columns)
                 pairs = [
