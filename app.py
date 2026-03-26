@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, time, timezone
 import math
+import numpy as np
 
 # Bắt lỗi nếu chưa cài thư viện AI
 try:
@@ -29,7 +30,6 @@ CHANNEL_DEPTHS = {
     'VL': 8.0, 'TCHP': 8.0, 'BB': 6.7
 }
 
-# ĐÃ CẬP NHẬT LẠI THỜI GIAN ĐI TỚI VÀM LÁNG (VL: 2.5h) CHO TUYẾN SỐ 4
 ROUTES = {
     "ĐI VÀO (INBOUND)": {
         "P0 Vũng Tàu - Lòng Tàu - Cát Lái": {'HL27': 2.0, 'HL21': 2.5, 'HL6': 4.0},
@@ -54,17 +54,6 @@ def lam_tron_hang_hai(val):
     hang_phan_tram = v_int % 10
     if hang_phan_tram >= 4: return (v_int // 10 + 1) / 10.0
     else: return (v_int // 10) / 10.0
-
-def calc_safe_th(amp):
-    if amp <= 0: return 3.0
-    r1 = amp / 12.0
-    r2 = 2.0 * amp / 12.0
-    r3 = 3.0 * amp / 12.0
-    limit = 0.4
-    if r1 > limit: return limit / r1
-    elif r2 > limit: return 1.0 + (limit - r1) / (r2 - r1)
-    elif r3 > limit: return 2.0 + (limit - r2) / (r3 - r2)
-    else: return 3.0 
 
 @st.cache_data
 def load_tide_data():
@@ -98,42 +87,6 @@ def load_tide_data():
     except: return None
     return dict_data if len(dict_data) > 0 else None
 
-@st.cache_data
-def load_extremes_data():
-    try:
-        sheet_n = 'HLW-VT' if 'HLW-VT' in pd.ExcelFile(FILE_EXCEL).sheet_names else 'HW_LW_VT'
-        df = pd.read_excel(FILE_EXCEL, sheet_name=sheet_n, header=None)
-        def parse_date(x):
-            x_str = str(x).strip()
-            if x_str.startswith(f'{NAM_DU_LIEU}-'):
-                try: return datetime.strptime(x_str[:10], '%Y-%m-%d').date()
-                except: return None
-            return None
-        df['RealDate'] = df[0].apply(parse_date)
-        is_blank = df[1].isna() | (df[1].astype(str).str.strip() == '')
-        df['Block'] = is_blank.cumsum()
-        df['RealDate'] = df.groupby('Block')['RealDate'].transform(lambda x: x.bfill().ffill())
-        df_valid = df[~is_blank].dropna(subset=['RealDate', 1, 2])
-        extremes = []
-        for _, row in df_valid.iterrows():
-            try:
-                d_obj = row['RealDate']
-                gio_val = row[1]
-                muc_nuoc = float(row[2])
-                if isinstance(gio_val, time): h, m = gio_val.hour, gio_val.minute
-                else: h, m = map(int, str(gio_val).strip().split(':'))
-                dt = datetime.combine(d_obj, time(h, m))
-                extremes.append({'dt': dt, 'level': muc_nuoc})
-            except: continue
-        extremes = sorted(extremes, key=lambda x: x['dt'])
-        for i in range(len(extremes)):
-            if i == 0: extremes[i]['type'] = 'HW' if extremes[i]['level'] > extremes[i+1]['level'] else 'LW'
-            elif i == len(extremes) - 1: extremes[i]['type'] = 'HW' if extremes[i]['level'] > extremes[i-1]['level'] else 'LW'
-            else: extremes[i]['type'] = 'HW' if extremes[i]['level'] > extremes[i-1]['level'] else 'LW'
-        return extremes
-    except Exception as e:
-        return None
-
 def tinh_ukc(draft, eta_time):
     t = eta_time.time()
     pct = 0.07 if datetime.strptime('05:01','%H:%M').time() <= t <= datetime.strptime('17:59','%H:%M').time() else 0.10
@@ -153,6 +106,258 @@ def noi_suy_thuy_trieu(df_tide, eta_time):
         if isinstance(v2, pd.Series): v2 = v2.iloc[0]
         return lam_tron_hang_hai(v1 + ((v2 - v1) * (mi / 60)))
     except: return None
+
+# ==========================================
+# LÕI THUẬT TOÁN WINDOW (BẢN GỐC 100% CỦA BẠN)
+# ==========================================
+@st.cache_data
+def process_slack_windows_original():
+    try:
+        xl = pd.ExcelFile(FILE_EXCEL)
+        
+        # 1. Đọc F28 Cát Lái
+        df_f28 = pd.DataFrame()
+        if 'CL' in xl.sheet_names:
+            df_cl = xl.parse('CL')
+            df_cl.columns = df_cl.columns.astype(str).str.strip().str.upper()
+            df_cl = df_cl.dropna(subset=['TIME']).copy()
+            df_cl['DATE'] = df_cl['DATE'].ffill()
+            dts_f28 = []
+            for _, r in df_cl.iterrows():
+                try:
+                    d = pd.to_datetime(r['DATE'])
+                    t = str(r['TIME']).strip()
+                    h, m = map(int, t.split(':')[:2])
+                    dts_f28.append(d + pd.Timedelta(hours=h, minutes=m))
+                except: continue
+            df_f28 = pd.DataFrame({'F28_DT': dts_f28}).dropna().sort_values('F28_DT')
+
+        # 2. Đọc F28 Cái Mép
+        df_f28cm = pd.DataFrame()
+        if 'CM' in xl.sheet_names:
+            df_cm = xl.parse('CM')
+            df_cm.columns = df_cm.columns.astype(str).str.strip().str.upper()
+            df_cm = df_cm.dropna(subset=['TIME']).copy()
+            df_cm['DATE'] = df_cm['DATE'].ffill()
+            dts_f28cm = []
+            for _, r in df_cm.iterrows():
+                try:
+                    d = pd.to_datetime(r['DATE'])
+                    t = str(r['TIME']).strip()
+                    h, m = map(int, t.split(':')[:2])
+                    dts_f28cm.append(d + pd.Timedelta(hours=h, minutes=m))
+                except: continue
+            df_f28cm = pd.DataFrame({'F28_DT': dts_f28cm}).dropna().sort_values('F28_DT')
+
+        # 3. Đọc dữ liệu triều Vũng Tàu (HLW-VT)
+        sheet_n = 'HLW-VT' if 'HLW-VT' in xl.sheet_names else 'HW_LW_VT'
+        df = xl.parse(sheet_n)
+        df.columns = df.columns.str.strip()
+        
+        col_time_orig = 'HL Water'
+        col_level = 'Level(m)'
+        
+        # Đề phòng tên cột trong file bị lệch
+        if col_time_orig not in df.columns:
+            df.columns = ['Date', 'HL Water', 'Level(m)'] + list(df.columns[3:])
+
+        df = df.dropna(subset=[col_time_orig, col_level]).copy()
+        df[col_level] = pd.to_numeric(df[col_level], errors='coerce')
+        df['Parsed_Date'] = pd.to_datetime(df['Date'], errors='coerce').bfill(limit=1).ffill()
+
+        base_dts = []
+        for _, row in df.iterrows():
+            try:
+                t = str(row[col_time_orig]).strip()
+                h, m = map(int, t.split(':')[:2])
+                base_dts.append(row['Parsed_Date'] + pd.Timedelta(hours=h, minutes=m))
+            except: base_dts.append(pd.NaT)
+
+        df['Event_Datetime'] = base_dts
+        df_clean = df.dropna(subset=['Event_Datetime', col_level]).sort_values('Event_Datetime').reset_index(drop=True)
+
+        # 4. LỌC BÓNG MA V2 (Giữ nguyên gốc)
+        df_clean['Amplitude'] = abs(df_clean[col_level] - df_clean[col_level].shift(1))
+        df_clean['Ký hiệu'] = np.where(df_clean[col_level] > df_clean[col_level].shift(1), 'HW', 'LW')
+
+        valid_indices = []
+        for idx, row in df_clean.iterrows():
+            if pd.notna(row['Amplitude']) and row['Amplitude'] == 0.0:
+                continue
+            valid_indices.append(idx)
+            
+        df_calc = df_clean.loc[valid_indices].copy().reset_index(drop=True)
+
+        # 5. TÍNH SLACK
+        final_cl_dts, final_cm_dts, arrs = [], [], []
+        res_cl, res_cm = [], []
+
+        for idx, row in df_calc.iterrows():
+            hw_lw, level, base_dt = row['Ký hiệu'], row[col_level], row['Event_Datetime']
+            
+            if hw_lw == 'HW':
+                arr = '↙'
+                delta_cm = 65 
+                if level >= 4.0: delta_cl = 235 
+                elif level >= 3.0: delta_cl = 205 
+                elif level >= 2.0: delta_cl = 195 
+                else: delta_cl = 185 
+            else:
+                arr = '↗'
+                delta_cm = 50 
+                if level >= 1.5: delta_cl = 220 
+                elif level >= 1.0: delta_cl = 225 
+                elif level >= 0.5: delta_cl = 230 
+                else: delta_cl = 235 
+
+            arrs.append(arr)
+
+            # Cát Lái
+            cl_dt = base_dt + pd.Timedelta(minutes=delta_cl)
+            final_cl_dt = cl_dt
+            if not df_f28.empty:
+                t_diffs = (df_f28['F28_DT'] - cl_dt).abs()
+                if t_diffs.min() <= pd.Timedelta(hours=3):
+                    best_f28 = df_f28.loc[t_diffs.idxmin(), 'F28_DT']
+                    d_mins = int((cl_dt - best_f28).total_seconds() / 60)
+                    early, d_abs = (cl_dt if d_mins < 0 else best_f28), abs(d_mins)
+                    if d_abs <= 15: final_cl_dt = early
+                    else: final_cl_dt = early + pd.Timedelta(minutes=int(d_abs * 0.35))
+                    final_cl_dt = final_cl_dt.replace(minute=(final_cl_dt.minute // 5) * 5)
+            final_s = final_cl_dt.strftime('%H:%M') + (' (+1)' if final_cl_dt.date() > base_dt.date() else '')
+            final_cl_dts.append(final_cl_dt)
+            res_cl.append(final_s)
+
+            # Cái Mép
+            cm_dt = base_dt + pd.Timedelta(minutes=delta_cm)
+            final_cm_dt = cm_dt
+            if not df_f28cm.empty:
+                t_diffs_cm = (df_f28cm['F28_DT'] - cm_dt).abs()
+                if t_diffs_cm.min() <= pd.Timedelta(hours=3):
+                    best_f28cm = df_f28cm.loc[t_diffs_cm.idxmin(), 'F28_DT']
+                    d_mins_cm = int((cm_dt - best_f28cm).total_seconds() / 60)
+                    early_cm, d_abs_cm = (cm_dt if d_mins_cm < 0 else best_f28cm), abs(d_mins_cm)
+                    if d_abs_cm <= 15: final_cm_dt = early_cm
+                    else: final_cm_dt = early_cm + pd.Timedelta(minutes=int(d_abs_cm * 0.35))
+                    final_cm_dt = final_cm_dt.replace(minute=(final_cm_dt.minute // 5) * 5)
+            final_cm_s = final_cm_dt.strftime('%H:%M') + (' (+1)' if final_cm_dt.date() > base_dt.date() else '')
+            final_cm_dts.append(final_cm_dt)
+            res_cm.append(final_cm_s)
+
+        df_calc['SlackCL_DT'] = final_cl_dts
+        df_calc['SlackCM_DT'] = final_cm_dts
+        df_calc['Dir'] = arrs
+        df_calc['Slack CL'] = res_cl
+        df_calc['Slack CM'] = res_cm
+
+        # 6. HÀM TÍNH TOÁN TARGET VÀ CỬA SỔ
+        def floor_to_15min(dt_obj):
+            if pd.isna(dt_obj) or dt_obj is None: return None
+            return dt_obj.replace(minute=(dt_obj.minute // 15) * 15, second=0, microsecond=0)
+
+        def calc_window_dt(t_slack, boundary_slack, dt_mins, amp, target_knot, is_before):
+            if pd.isna(t_slack) or pd.isna(dt_mins) or pd.isna(amp) or dt_mins <= 0 or amp <= 0: 
+                return None
+            th_mins = dt_mins / 6.0 
+            speeds = [0, (1/12 * amp) / 0.2, (2/12 * amp) / 0.2, (3/12 * amp) / 0.2] 
+            if target_knot > speeds[-1]: return floor_to_15min(boundary_slack)
+            else:
+                for k in range(1, 4):
+                    if speeds[k-1] <= target_knot <= speeds[k]:
+                        frac = 0 if speeds[k] == speeds[k-1] else (target_knot - speeds[k-1]) / (speeds[k] - speeds[k-1])
+                        delta_mins = (k - 1 + frac) * th_mins
+                        res_time = t_slack - pd.Timedelta(minutes=delta_mins) if is_before else t_slack + pd.Timedelta(minutes=delta_mins)
+                        return floor_to_15min(res_time)
+            return None
+
+        TARGET_BEGIN_CL, TARGET_END_CL = 2.1, 1.5
+        TARGET_BEGIN_CM1, TARGET_END_CM1 = 1.5, 1.0
+        TARGET_BEGIN_CM2, TARGET_END_CM2 = 2.3, 1.6
+
+        raw_b_cl, raw_e_cl = [], []
+        raw_b_cm1, raw_e_cm1 = [], []
+        raw_b_cm2, raw_e_cm2 = [], []
+
+        for i in range(len(df_calc)):
+            # CL
+            if i > 0:
+                boundary_prev = df_calc['SlackCL_DT'][i-1]
+                dur_bef = (df_calc['SlackCL_DT'][i] - boundary_prev).total_seconds() / 60
+                amp_bef = abs(df_calc[col_level][i] - df_calc[col_level][i-1])
+                raw_b_cl.append(calc_window_dt(df_calc['SlackCL_DT'][i], boundary_prev, dur_bef, amp_bef, TARGET_BEGIN_CL, True))
+            else: raw_b_cl.append(None)
+            
+            if i < len(df_calc) - 1:
+                boundary_next = df_calc['SlackCL_DT'][i+1]
+                dur_aft = (boundary_next - df_calc['SlackCL_DT'][i]).total_seconds() / 60
+                amp_aft = abs(df_calc[col_level][i+1] - df_calc[col_level][i])
+                raw_e_cl.append(calc_window_dt(df_calc['SlackCL_DT'][i], boundary_next, dur_aft, amp_aft, TARGET_END_CL, False))
+            else: raw_e_cl.append(None)
+
+            # CM
+            if i > 0:
+                boundary_prev = df_calc['SlackCM_DT'][i-1]
+                dur_bef = (df_calc['SlackCM_DT'][i] - boundary_prev).total_seconds() / 60
+                amp_bef = abs(df_calc[col_level][i] - df_calc[col_level][i-1])
+                raw_b_cm1.append(calc_window_dt(df_calc['SlackCM_DT'][i], boundary_prev, dur_bef, amp_bef, TARGET_BEGIN_CM1, True))
+                raw_b_cm2.append(calc_window_dt(df_calc['SlackCM_DT'][i], boundary_prev, dur_bef, amp_bef, TARGET_BEGIN_CM2, True))
+            else: 
+                raw_b_cm1.append(None); raw_b_cm2.append(None)
+            
+            if i < len(df_calc) - 1:
+                boundary_next = df_calc['SlackCM_DT'][i+1]
+                dur_aft = (boundary_next - df_calc['SlackCM_DT'][i]).total_seconds() / 60
+                amp_aft = abs(df_calc[col_level][i+1] - df_calc[col_level][i])
+                raw_e_cm1.append(calc_window_dt(df_calc['SlackCM_DT'][i], boundary_next, dur_aft, amp_aft, TARGET_END_CM1, False))
+                raw_e_cm2.append(calc_window_dt(df_calc['SlackCM_DT'][i], boundary_next, dur_aft, amp_aft, TARGET_END_CM2, False))
+            else: 
+                raw_e_cm1.append(None); raw_e_cm2.append(None)
+
+        # 7. RELAY RACE
+        b_cl, e_cl = [], []
+        b_cm1, e_cm1 = [], []
+        b_cm2, e_cm2 = [], []
+
+        for i in range(len(df_calc)):
+            # CL
+            b_cl_val = raw_b_cl[i]
+            if i > 0 and b_cl_val is not None and raw_e_cl[i-1] is not None:
+                if b_cl_val < raw_e_cl[i-1]: b_cl_val = raw_e_cl[i-1]
+            b_cl.append(b_cl_val)
+            e_cl.append(raw_e_cl[i])
+
+            # CM1
+            b_cm1_val = raw_b_cm1[i]
+            if i > 0 and b_cm1_val is not None and raw_e_cm1[i-1] is not None:
+                if b_cm1_val < raw_e_cm1[i-1]: b_cm1_val = raw_e_cm1[i-1]
+            b_cm1.append(b_cm1_val)
+            e_cm1.append(raw_e_cm1[i])
+
+            # CM2
+            b_cm2_val = raw_b_cm2[i]
+            if i > 0 and b_cm2_val is not None and raw_e_cm2[i-1] is not None:
+                if b_cm2_val < raw_e_cm2[i-1]: b_cm2_val = raw_e_cm2[i-1]
+            b_cm2.append(b_cm2_val)
+            e_cm2.append(raw_e_cm2[i])
+
+        df_calc['B_CL'] = b_cl
+        df_calc['E_CL'] = e_cl
+        df_calc['B_CM1'] = b_cm1
+        df_calc['E_CM1'] = e_cm1
+        df_calc['B_CM2'] = b_cm2
+        df_calc['E_CM2'] = e_cm2
+
+        return df_calc
+
+    except Exception as e:
+        return pd.DataFrame()
+
+def format_win_str(dt_val, ref_dt):
+    if pd.isna(dt_val) or dt_val is None: return "-"
+    s = dt_val.strftime('%H:%M')
+    if dt_val.date() > ref_dt.date(): s += ' (+1)'
+    elif dt_val.date() < ref_dt.date(): s += ' (-1)'
+    return s
 
 @st.cache_data
 def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
@@ -179,39 +384,38 @@ def tao_bang_mon_nuoc_toi_da(data_dict, thang_chon):
     return pd.DataFrame(danh_sach_dong)
 
 # ==========================================
-# KHỞI TẠO AI CHATBOT (CHUẨN ĐỊA LÝ & YÊU CẦU NGẮN GỌN)
+# KHỞI TẠO AI CHATBOT (BƠM DỮ LIỆU WINDOW MỚI)
 # ==========================================
 @st.cache_resource
-def get_ai_bot(_extremes_list, api_key):
+def get_ai_bot(_df_calc, api_key):
     genai.configure(api_key=api_key)
     
-    almanac_str = "\n".join([f"- {e['dt'].strftime('%d/%m/%Y %H:%M')} | {e['type']} | {e['level']:.1f}m" for e in _extremes_list]) if _extremes_list else "Không có dữ liệu triều."
+    if not _df_calc.empty:
+        ai_data = []
+        for i, r in _df_calc.iterrows():
+            d_str = r['Event_Datetime'].strftime('%d/%m %H:%M')
+            lvl = r.get('Level(m)', 0)
+            
+            win_cl = f"{r['B_CL'].strftime('%H:%M')}-{r['E_CL'].strftime('%H:%M')}" if pd.notna(r['B_CL']) and pd.notna(r['E_CL']) else "-"
+            win_cm = f"{r['B_CM1'].strftime('%H:%M')}-{r['E_CM1'].strftime('%H:%M')}" if pd.notna(r['B_CM1']) and pd.notna(r['E_CM1']) else "-"
+            ai_data.append(f"{d_str}|{r['Ký hiệu']} {lvl}m -> CL:{win_cl} | CM(Lớn):{win_cm}")
+        almanac_str = "\n".join(ai_data)
+    else:
+        almanac_str = "Không có dữ liệu."
 
-    # ĐÃ ĐIỀU CHỈNH LẠI THÔNG SỐ VÀM LÁNG CHO TUYẾN CL-SR THÀNH 2.5H
     system_instruction = f"""
-    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). Bạn là người ra quyết định chuyên nghiệp.
+    Bạn là Trợ lý AI Hoa Tiêu Hàng Hải (Tân Cảng Pilot). 
     
-    ĐỊNH NGHĨA TUYẾN LUỒNG & CHOKEPOINT (TUYỆT ĐỐI TUÂN THỦ KHÔNG ĐƯỢC NHẦM LẪN):
-    1. ĐI VÀO (INBOUND):
-       - "P0 Vũng Tàu - Lòng Tàu - Cát Lái": Qua Dần Xây/HL27 (sau 2h), L'est/HL21 (sau 2.5h), Đèn Đỏ/HL6 (sau 4h). Tuyệt đối KHÔNG liên quan đến Hiệp Phước hay Vàm Láng.
-       - "P0 SR (H25) - Soài Rạp - TC Hiệp Phước": Qua Vàm Láng/VL (sau 1.5h), TC Hiệp Phước/TCHP (sau 3h).
-    2. ĐI RA (OUTBOUND):
-       - "Cát Lái - Lòng Tàu - P0 Vũng Tàu": Qua HL6 (sau 0.5h), HL21 (sau 2h), HL27 (sau 2.5h).
-       - "Cát Lái - Soài Rạp (Bờ Băng) - P0 SR (H25)": Qua Bờ Băng/BB (sau 1h), Vàm Láng/VL (sau 2.5h).
-       - "TC Hiệp Phước - Soài Rạp (Vàm Láng) - P0 SR (H25)": Qua TCHP (sau 0.5h), Vàm Láng/VL (sau 1.5h).
-
-    THÔNG SỐ BẮT BUỘC:
-    1. Độ sâu chuẩn: HL6 (-8.8m), HL21 (-8.5m), HL27 (-8.5m), BB (-6.7m), VL (-8.0m), TCHP (-8.0m).
-    2. UKC (Khoảng sáng gầm tàu): Ngày 7%, Đêm 10%. Độ sâu yêu cầu = Mớn * (1 + UKC).
+    ĐỊNH NGHĨA TUYẾN LUỒNG:
+    1. ĐI VÀO: "P0 Vũng Tàu - Cát Lái" (Qua HL6 sau 4h). "P0 SR - TC Hiệp Phước" (Qua TCHP sau 3h). CÁI MÉP (Tàu cập thẳng Cái Mép).
+    2. ĐI RA: "Cát Lái - Vũng Tàu" (Qua HL6 sau 0.5h). "Cát Lái - Soài Rạp H25" (Qua Bờ Băng, Vàm Láng).
     
-    CẤU TRÚC BÁO CÁO (BẮT BUỘC ĐÚNG 3 GẠCH ĐẦU DÒNG, DỨT KHOÁT NHƯ BỘ ĐÀM VHF):
-    - Tuyến luồng: [Đọc đúng Tên tuyến và các điểm cạn theo định nghĩa trên].
-    - Đánh giá mớn: Mớn [X]m + UKC cần độ sâu tối thiểu [Y]m. Đánh giá [Lọt / Cạn].
-    - Chốt giờ POB: [Khung giờ an toàn đề xuất từ ... đến ...].
+    CẤU TRÚC BÁO CÁO NHƯ BỘ ĐÀM VHF:
+    - Tuyến: [Tên tuyến].
+    - Đánh giá mớn: Mớn + UKC. [Lọt / Cạn].
+    - Chốt giờ POB: Dựa vào DỮ LIỆU WINDOW bên dưới, chọn giờ POB sao cho giờ tàu đến Cát Lái/Cái Mép phải nằm LỌT GIỮA khung Window quy định.
     
-    Tuyệt đối không giải thích thuật toán, không nói luyên thuyên. 
-    
-    DỮ LIỆU THỦY TRIỀU VŨNG TÀU 2026:
+    DỮ LIỆU WINDOW CÁT LÁI & CÁI MÉP 2026 (Ngày giờ | HW/LW Đỉnh triều -> Khung giờ dòng chảy êm):
     {almanac_str}
     """
     
@@ -231,35 +435,26 @@ def get_ai_bot(_extremes_list, api_key):
                     break
         if not chosen_model:
             chosen_model = clean_models[0].replace('models/', '') if clean_models else 'gemini-1.5-flash'
-            
-    except Exception as e:
-        chosen_model = 'gemini-1.5-flash'
+    except Exception as e: chosen_model = 'gemini-1.5-flash'
         
     model = genai.GenerativeModel(chosen_model)
     return model, chosen_model, system_instruction
 
 # ==========================================
-# GIAO DIỆN WEB (UI) - KÈM HIỆU ỨNG 3D CHO TAB
+# GIAO DIỆN WEB (UI)
 # ==========================================
 st.set_page_config(page_title="Tan Cang Pilot Tide Calculation", layout="wide", initial_sidebar_state="collapsed")
+
+df_slack = process_slack_windows_original()
+data_dict = load_tide_data()
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
     .stButton>button { min-height: 55px; font-weight: bold; border-radius: 8px; margin-top: 15px; }
-    .footer { text-align: justify; color: gray; font-size: 0.85em; margin-top: 60px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 20px; }
-    
     .safe-window { background-color: rgba(46, 160, 67, 0.15); border-left: 5px solid #2ea043; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .warn-window { background-color: rgba(212, 167, 44, 0.15); border-left: 5px solid #d4a72c; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
     .unsafe-window { background-color: rgba(207, 34, 46, 0.15); border-left: 5px solid #cf222e; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
-    
-    .tide-box { background-color: rgba(128, 128, 128, 0.05); padding: 10px; border-radius: 8px; text-align: center; border: 1px solid rgba(128, 128, 128, 0.2); }
-    .tide-table { width: 100%; text-align: center; font-size: 0.9em; border-collapse: collapse; margin-top: 10px; }
-    .tide-table th { font-weight: bold; border-bottom: 1px solid rgba(128, 128, 128, 0.3); padding-bottom: 5px; opacity: 0.8; }
-    .tide-table td { padding: 4px 0; border-bottom: 1px dashed rgba(128, 128, 128, 0.1); }
-    
-    .hw-row { background-color: rgba(0, 153, 255, 0.15); font-weight: bold; color: #0099ff; }
-    .lw-row { background-color: rgba(255, 75, 75, 0.15); font-weight: bold; color: #ff4b4b; }
     
     div.row-widget.stRadio > div{ flex-direction:row; }
     [data-testid="stNumberInput"], [data-testid="stDateInput"], [data-testid="stTimeInput"], 
@@ -281,47 +476,34 @@ st.markdown("""
         margin-right: 5px;
         transition: all 0.15s ease-in-out;
     }
-    button[data-baseweb="tab"]:hover {
-        transform: translateY(-2px); 
-        border-bottom: 6px solid rgba(128,128,128,0.4);
-    }
+    button[data-baseweb="tab"]:hover { transform: translateY(-2px); border-bottom: 6px solid rgba(128,128,128,0.4); }
     button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: transparent;
-        border-bottom: 0px solid transparent; 
-        transform: translateY(4px); 
-        box-shadow: inset 0 3px 6px rgba(0,0,0,0.1); 
-        border-top: 3px solid #ff4b4b; 
+        background-color: transparent; border-bottom: 0px solid transparent; 
+        transform: translateY(4px); box-shadow: inset 0 3px 6px rgba(0,0,0,0.1); 
+        border-top: 3px solid #0099ff; 
     }
-    @media (prefers-color-scheme: dark) {
-        button[data-baseweb="tab"][aria-selected="true"] {
-            box-shadow: inset 0 3px 6px rgba(0,0,0,0.5);
-        }
-    }
+    @media (prefers-color-scheme: dark) { button[data-baseweb="tab"][aria-selected="true"] { box-shadow: inset 0 3px 6px rgba(0,0,0,0.5); } }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 SNP Tide Calc.")
+st.title("🚢 TAN CANG PILOT V3.1")
 
 st.markdown("""
 <div style="font-size: 0.65em; margin-bottom: 20px; padding: 10px; background-color: rgba(128,128,128,0.1); border-radius: 5px; opacity: 0.9;">
-    UKC: Ban ngày (06h-17h) 7%, Ban đêm 10%. &nbsp;|&nbsp; 
-    Đèn Đỏ (HL6)=<strong style="color: #ff4b4b;">-8.8m</strong>; L'est (HL21)=<strong style="color: #ff4b4b;">-8.5m</strong>; Dần Xây (HL27)=<strong style="color: #ff4b4b;">-8.5m</strong>; 
-    Bờ Băng (BB)=<strong style="color: #ff4b4b;">-6.7m</strong>; Vàm Láng (VL)=<strong style="color: #ff4b4b;">-8.0m</strong>; TCHP=<strong style="color: #ff4b4b;">-8.0m</strong>.
+    UKC: Ngày 7%, Đêm 10%. &nbsp;|&nbsp; 
+    HL6=<strong style="color: #ff4b4b;">-8.8m</strong>; HL21/HL27=<strong style="color: #ff4b4b;">-8.5m</strong>; BB=<strong style="color: #ff4b4b;">-6.7m</strong>; VL/TCHP=<strong style="color: #ff4b4b;">-8.0m</strong>.
 </div>
 """, unsafe_allow_html=True)
 
-data_dict = load_tide_data()
-extremes_data = load_extremes_data()
+if data_dict is None or df_slack.empty:
+    st.error(f"⚠️ Thiếu file hoặc dữ liệu {FILE_EXCEL} không hợp lệ!"); st.stop()
 
-if data_dict is None:
-    st.error(f"⚠️ Thiếu file {FILE_EXCEL}!"); st.stop()
-
-# ĐÃ SẮP XẾP LẠI THỨ TỰ TABS THEO ĐÚNG YÊU CẦU CỦA BẠN
-tab_pob_draft, tab_ai, tab_draft_pob, tab_max_draft = st.tabs([
-    "POB and Draft", 
-    "🤖Trợ lý AI", 
-    "Draft for POB", 
-    "📅Max Draft Table"
+tab_pob_draft, tab_ai, tab_draft_pob, tab_max_draft, tab_window = st.tabs([
+    "🚀 POB and Draft", 
+    "🤖 Trợ lý AI", 
+    "⏱️ Draft for POB", 
+    "📅 Max Draft Table",
+    "🌊 Slack Water Window"
 ])
 
 # ----------------- TAB 1: POB AND DRAFT -----------------
@@ -363,50 +545,36 @@ with tab_ai:
     else:
         st.markdown("### 🤖 Trợ lý AI Tân Cảng Pilot")
         
-        st.markdown("""
-        <div style="background-color: rgba(0, 153, 255, 0.1); padding: 15px; border-radius: 8px; border-left: 4px solid #0099ff; margin-bottom: 20px;">
-            <strong>💡 MẪU CÂU HỎI NHANH:</strong><br>
-            <i>Hãy gõ câu hỏi theo ý bạn, AI sẽ tính toán ngay lập tức:</i>
-            <ul style="margin-top: 5px; margin-bottom: 0px;">
-                <li>"Tàu ETA 07:00 ngày 25/03, mớn 10.7m, đi Cát Lái. Giờ nào an toàn?"</li>
-                <li>"Mớn 9.8m ngày 13/3 mấy giờ đi từ Cát Lái ra H25 được?"</li>
-                <li>"Tìm giờ POB tốt nhất cho tàu mớn 11m Inbound Cát Lái ngày 2/5."</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-        
         if "chat_session" not in st.session_state:
-            with st.spinner("Đang khởi động hệ thống AI & Nạp dữ liệu thủy triều..."):
+            with st.spinner("Đang khởi động AI & Tích hợp thuật toán Slack Water..."):
                 try:
-                    ai_model, model_name, sys_instruct = get_ai_bot(extremes_data, API_KEY)
-                    
+                    ai_model, model_name, sys_instruct = get_ai_bot(df_slack, API_KEY)
                     st.session_state.chat_session = ai_model.start_chat(history=[
                         {"role": "user", "parts": [sys_instruct]},
-                        {"role": "model", "parts": ["Đã rõ thưa Thuyền trưởng. Tôi đã nạp bản đồ luồng tuyến chuẩn xác và sẽ báo cáo kết quả theo đúng 3 ý yêu cầu, không phân tích rườm rà. Xin chờ lệnh!"]}
+                        {"role": "model", "parts": ["Đã rõ thưa Thuyền trưởng. Báo cáo chốt lọt/cạn và giờ Window chuẩn xác. Xin lệnh!"]}
                     ])
                 except Exception as e:
                     st.error(f"Lỗi khởi tạo AI: {e}")
 
         if "chat_session" in st.session_state:
-            # Bỏ qua 2 tin nhắn hệ thống đầu tiên
             for message in st.session_state.chat_session.history[2:]:
                 role = "user" if message.role == "user" else "assistant"
                 with st.chat_message(role):
                     st.markdown(message.parts[0].text)
 
-            if user_prompt := st.chat_input("Nhập yêu cầu điều động tàu tại đây..."):
+            if user_prompt := st.chat_input("Nhập yêu cầu điều động (VD: Mớn 10.7m, đi Cát Lái ngày 25/03, giờ nào an toàn?)..."):
                 with st.chat_message("user"):
                     st.markdown(user_prompt)
                 
                 with st.chat_message("assistant"):
-                    with st.spinner("Đang tra cứu thủy triều và tính toán..."):
+                    with st.spinner("Đang chéo bảng triều và cắt Window..."):
                         try:
                             response = st.session_state.chat_session.send_message(user_prompt)
                             st.markdown(response.text)
                         except Exception as e:
                             st.error(f"⚠️ Đã có lỗi xảy ra: {e}")
 
-# ----------------- TAB 3: DRAFT FOR POB -----------------
+# ----------------- TAB 3: DRAFT FOR POB (SỬ DỤNG LÕI WINDOW CHUẨN) -----------------
 with tab_draft_pob:
     col3_1, col3_2 = st.columns(2)
     bay_gio_t3 = get_vn_time()
@@ -421,139 +589,73 @@ with tab_draft_pob:
     if st.button("⏱️ QUÉT TÌM GIỜ CHẠY TÀU", use_container_width=True, key="btn_t3"):
         st.markdown("---")
         pts = ROUTES[huong_di_t3][tuyen_luong_t3]
-        
         current_time_vn = get_vn_time()
         rounded_now = current_time_vn.replace(minute=(0 if current_time_vn.minute < 30 else 30), second=0, microsecond=0)
-
-        local_windows = []
-        if extremes_data and len(extremes_data) >= 3:
-            if huong_di_t3 == "ĐI VÀO (INBOUND)":
-                for i in range(1, len(extremes_data) - 1):
-                    prev_ex, curr_ex, next_ex = extremes_data[i-1], extremes_data[i], extremes_data[i+1]
-                    
-                    amp_before = abs(curr_ex['level'] - prev_ex['level'])
-                    amp_after = abs(next_ex['level'] - curr_ex['level'])
-                    th_before = (curr_ex['dt'] - prev_ex['dt']).total_seconds() / 60 / 6
-                    th_after = (next_ex['dt'] - curr_ex['dt']).total_seconds() / 60 / 6
-                    
-                    if amp_before <= 1.0: start_dt = prev_ex['dt']
-                    else: start_dt = curr_ex['dt'] - timedelta(minutes=2.5 * th_before)
-                    
-                    if amp_after <= 1.0: end_dt = next_ex['dt']
-                    elif amp_after <= 1.5: end_dt = curr_ex['dt'] + timedelta(minutes=0.5 * th_after)
-                    else: end_dt = curr_ex['dt']
-                    
-                    local_windows.append({
-                        'type': curr_ex['type'],
-                        'arrow': '↙' if curr_ex['type'] == 'HW' else '↗',
-                        'desc': 'HW' if curr_ex['type'] == 'HW' else 'LW',
-                        'dt': curr_ex['dt'],
-                        'start': start_dt,
-                        'end': end_dt
-                    })
-            else:
-                local_extremes = []
-                for ex in extremes_data:
-                    lag = timedelta(hours=LAG_HIEPPHUOC_HOURS)
-                    if "Cát Lái" in tuyen_luong_t3:
-                        if ex['type'] == 'HW':
-                            lag = timedelta(hours=3, minutes=5)
-                        else:
-                            lvl = ex['level']
-                            if lvl >= 1.5: lag = timedelta(hours=3, minutes=30)
-                            elif 1.0 <= lvl < 1.5: lag = timedelta(hours=3, minutes=35)
-                            elif 0.5 <= lvl < 1.0: lag = timedelta(hours=3, minutes=40)
-                            else: lag = timedelta(hours=3, minutes=45)
-                    local_ex = ex.copy()
-                    local_ex['dt'] = ex['dt'] + lag
-                    local_ex['desc'] = 'Tdown' if ex['type'] == 'HW' else 'Tup'
-                    local_ex['arrow'] = '↙' if ex['type'] == 'HW' else '↗'
-                    local_extremes.append(local_ex)
-                
-                for i in range(1, len(local_extremes) - 1):
-                    prev_ex, curr_ex, next_ex = local_extremes[i-1], local_extremes[i], local_extremes[i+1]
-                    
-                    amp_before = abs(curr_ex['level'] - prev_ex['level'])
-                    amp_after = abs(next_ex['level'] - curr_ex['level'])
-                    th_before = (curr_ex['dt'] - prev_ex['dt']).total_seconds() / 60 / 6
-                    th_after = (next_ex['dt'] - curr_ex['dt']).total_seconds() / 60 / 6
-                    
-                    safe_prev_th = calc_safe_th(amp_before)
-                    safe_next_th = calc_safe_th(amp_after)
-                    
-                    start_dt = curr_ex['dt'] - timedelta(minutes=safe_prev_th * th_before)
-                    end_dt = curr_ex['dt'] + timedelta(minutes=safe_next_th * th_after)
-                    
-                    local_windows.append({
-                        'type': curr_ex['type'],
-                        'arrow': curr_ex['arrow'],
-                        'desc': curr_ex['desc'],
-                        'dt': curr_ex['dt'],
-                        'start': start_dt,
-                        'end': end_dt
-                    })
 
         ket_qua = []
         khung_gio_hoan_hao = []
         dang_trong_khung = False
         gio_bat_dau = None
         
+        di_cat_lai = "Cát Lái" in tuyen_luong_t3
+        travel_to_cl = pts.get('HL6', 0) if di_cat_lai else 0
+
         for h in range(24):
             for m in [0, 30]:
                 thoi_gian_xet = time(h, m)
                 pob_t = datetime.combine(ngay_pob_t3, thoi_gian_xet)
                 
-                if pob_t < rounded_now:
-                    continue
+                if pob_t < rounded_now: continue
                 
                 is_safe = True
                 ly_do = ""
-                min_clearance = 999
                 
+                # Quét lọt mớn
                 for p, travel_h in pts.items():
                     if p not in data_dict:
-                        is_safe, ly_do = False, f"Thiếu dữ liệu trạm {p}"; break
+                        is_safe, ly_do = False, f"Thiếu dữ liệu {p}"; break
                         
                     eta = pob_t + timedelta(hours=travel_h)
                     req, _ = tinh_ukc(mon_nuoc_t3, eta)
                     tide_h = noi_suy_thuy_trieu(data_dict[p], eta)
 
                     if tide_h is None:
-                        is_safe, ly_do = False, f"Vượt quá ngày DL Triều"; break
+                        is_safe, ly_do = False, f"Hết dữ liệu Triều"; break
 
                     act = lam_tron_hang_hai(CHANNEL_DEPTHS[p] + tide_h)
                     clearance = round(act - req, 1)
 
                     if clearance < 0:
-                        is_safe = False
-                        if clearance < min_clearance:
-                            min_clearance, ly_do = clearance, f"Cạn tại {p} (Thiếu {-clearance:.1f}m)"
+                        is_safe, ly_do = False, f"Cạn tại {p} (Thiếu {-clearance:.1f}m)"
+                        break
                             
+                # Đối chiếu Window
                 is_in_window = False
                 window_note = "N/A"
-                if local_windows:
-                    for w in local_windows:
-                        if w['start'] <= pob_t <= w['end']:
-                            is_in_window = True
-                            window_note = f"{w['arrow']} Dòng chùng sát {w['desc']} ({w['dt'].strftime('%H:%M')})"
-                            break
-                    if not is_in_window:
-                        window_note = "Ngoài Window (Dòng xiết)"
+                
+                if di_cat_lai and not df_slack.empty:
+                    eta_cl = pob_t + timedelta(hours=travel_to_cl)
+                    for _, r in df_slack.iterrows():
+                        if pd.notna(r['B_CL']) and pd.notna(r['E_CL']):
+                            if r['B_CL'] <= eta_cl <= r['E_CL']:
+                                is_in_window = True
+                                window_note = f"{r['Dir']} Dòng êm ({r['B_CL'].strftime('%H:%M')}-{r['E_CL'].strftime('%H:%M')} tại CL)"
+                                break
+                    if not is_in_window: window_note = "Ngoài Window (Dòng xiết)"
+                elif not di_cat_lai:
+                    is_in_window = True
+                    window_note = "Lọt mớn an toàn"
 
                 if is_safe:
-                    if local_windows:
-                        if is_in_window:
-                            ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "✅ LỌT & WINDOW", "Ghi chú": window_note})
-                            if not dang_trong_khung: gio_bat_dau, dang_trong_khung = thoi_gian_xet.strftime('%H:%M'), True
-                        else:
-                            ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "⚠️ LỌT (NƯỚC XIẾT)", "Ghi chú": window_note})
-                            if dang_trong_khung:
-                                gio_ket_thuc = (pob_t - timedelta(minutes=30)).strftime('%H:%M')
-                                khung_gio_hoan_hao.append(f"{gio_bat_dau} đến {gio_ket_thuc}")
-                                dang_trong_khung = False
-                    else:
-                        ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "✅ AN TOÀN", "Ghi chú": "Lọt (Chưa bật Window)"})
+                    if is_in_window:
+                        ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "✅ LỌT & WINDOW", "Ghi chú": window_note})
                         if not dang_trong_khung: gio_bat_dau, dang_trong_khung = thoi_gian_xet.strftime('%H:%M'), True
+                    else:
+                        ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "⚠️ LỌT (DÒNG XIẾT)", "Ghi chú": window_note})
+                        if dang_trong_khung:
+                            gio_ket_thuc = (pob_t - timedelta(minutes=30)).strftime('%H:%M')
+                            khung_gio_hoan_hao.append(f"{gio_bat_dau} đến {gio_ket_thuc}")
+                            dang_trong_khung = False
                 else:
                     ket_qua.append({"Giờ POB": thoi_gian_xet.strftime('%H:%M'), "Trạng thái": "❌ CẠN", "Ghi chú": ly_do})
                     if dang_trong_khung:
@@ -564,9 +666,9 @@ with tab_draft_pob:
         if dang_trong_khung: khung_gio_hoan_hao.append(f"{gio_bat_dau} đến 23:30")
 
         if len(khung_gio_hoan_hao) > 0:
-            st.markdown(f"<div class='safe-window'><strong>🎯 KẾT LUẬN (CỬA SỔ VÀNG):</strong> Tàu có thể POB vừa đủ UKC vừa dòng chảy êm trong khoảng:<br><h3>" + " <br> ".join([f"🕒 {k}" for k in khung_gio_hoan_hao]) + "</h3></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='safe-window'><strong>🎯 KẾT LUẬN (CỬA SỔ VÀNG):</strong> Tàu có thể POB lọt mớn & đúng dòng êm trong khoảng:<br><h3>" + " <br> ".join([f"🕒 {k}" for k in khung_gio_hoan_hao]) + "</h3></div>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<div class='unsafe-window'><strong>⚠️ KẾT LUẬN:</strong> Không có bất kỳ khung giờ nào hợp lệ đáp ứng đủ mớn nước HOẶC window time!</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='unsafe-window'><strong>⚠️ KẾT LUẬN:</strong> Không có giờ POB nào lọt mớn hoặc rơi vào Window!</div>", unsafe_allow_html=True)
 
         st.markdown("#### 📋 Bảng chi tiết")
         df_kq = pd.DataFrame(ket_qua)
@@ -576,51 +678,8 @@ with tab_draft_pob:
                 elif "⚠️" in val: return 'color: #b8860b; font-weight: bold;'
                 elif "❌" in val: return 'color: #cc0000; font-weight: bold;'
                 return ''
-                
             styled_kq = df_kq.style.map(color_status, subset=['Trạng thái'])
             st.dataframe(styled_kq, use_container_width=True, height=400)
-        else:
-            st.info("Không có mốc thời gian nào để hiển thị (đã qua hết giờ trong ngày).")
-
-    if extremes_data:
-        st.markdown("---")
-        col_y, col_t, col_tm = st.columns(3)
-        dates_to_show = [ngay_pob_t3 - timedelta(days=1), ngay_pob_t3, ngay_pob_t3 + timedelta(days=1)]
-        headers = ["Yesterday", "Today", "Tomorrow"]
-        cols_ui = [col_y, col_t, col_tm]
-
-        for i, d in enumerate(dates_to_show):
-            with cols_ui[i]:
-                day_ex = [e for e in extremes_data if e['dt'].date() == d]
-                st.markdown(f"<div class='tide-box'><strong>{headers[i]} ({d.strftime('%d/%m')})</strong><br>", unsafe_allow_html=True)
-                if day_ex:
-                    html_table = "<table class='tide-table'><tr><th>Phân loại</th><th>Vũng Tàu</th><th>Độ cao</th><th>Cát Lái</th><th>Mũi tên</th></tr>"
-                    for e in day_ex:
-                        if e['type'] == 'HW':
-                            lag = timedelta(hours=3, minutes=5)
-                            arrow = "↙"
-                            row_class = "hw-row"
-                        else:
-                            lvl = e['level']
-                            if lvl >= 1.5: lag = timedelta(hours=3, minutes=30)
-                            elif 1.0 <= lvl < 1.5: lag = timedelta(hours=3, minutes=35)
-                            elif 0.5 <= lvl < 1.0: lag = timedelta(hours=3, minutes=40)
-                            else: lag = timedelta(hours=3, minutes=45)
-                            arrow = "↗"
-                            row_class = "lw-row"
-                            
-                        if "Hiệp Phước" in tuyen_luong_t3:
-                            lag = timedelta(hours=LAG_HIEPPHUOC_HOURS)
-                            
-                        vt_time = e['dt'].strftime('%H:%M')
-                        cl_time = (e['dt'] + lag).strftime('%H:%M')
-                        
-                        html_table += f"<tr class='{row_class}'><td><b>{e['type']}</b></td><td>{vt_time}</td><td>{e['level']:.1f}m</td><td>{cl_time}</td><td>{arrow}</td></tr>"
-                    html_table += "</table>"
-                    st.markdown(html_table, unsafe_allow_html=True)
-                else:
-                    st.write("Không có dữ liệu")
-                st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------- TAB 4: MAX DRAFT TABLE -----------------
 with tab_max_draft:
@@ -638,14 +697,11 @@ with tab_max_draft:
     if not bang_raw.empty:
         df_f = bang_raw.copy()
         if thang_ch == bay_gio_t2.month and not show_old: df_f = df_f[df_f['Ngay_Goc'] >= bay_gio_t2.day]
-        
         rev_map = {'HL6': 'HL6', 'HL21': 'HL21', 'HL27': 'HL27', 'VL': 'Vàm Láng', 'TCHP': 'TC Hiệp Phước', 'BB': 'Bờ Băng'}
         df_f['Điểm'] = df_f['Điểm'].map(rev_map)
         
-        if tu_sel:
-            df_f = df_f[df_f['Điểm'].isin(tu_sel)]
-        else:
-            df_f = df_f[df_f['Điểm'].isin([])]
+        if tu_sel: df_f = df_f[df_f['Điểm'].isin(tu_sel)]
+        else: df_f = df_f[df_f['Điểm'].isin([])]
 
         ngay_list = df_f['Ngày'].tolist()
         new_ngay = []
@@ -657,23 +713,76 @@ with tab_max_draft:
         
         if not df_f.empty:
             df_disp = df_f.drop(columns=['Ngay_Goc']).set_index(['Ngày', 'Điểm'])
-
             def apply_st(df):
                 stys = pd.DataFrame('', index=df.index, columns=df.columns)
                 for i in range(len(df)):
                     if "Sun" in ngay_list[i]: stys.iloc[i, :] = 'background-color: rgba(255, 75, 75, 0.15); color: #ff4b4b; font-weight: bold;'
                 return stys
-                
             def style_idx(val):
                 if val in ['HL6','HL21','HL27']: return 'color: #33ccff; font-weight: bold;'
                 if val in ['Vàm Láng','Bờ Băng','TC Hiệp Phước']: return 'color: #ff9933; font-weight: bold;'
                 return 'font-weight: bold;'
-                
             styled_df = df_disp.style.apply(apply_st, axis=None).map_index(style_idx, axis=0)
             st.dataframe(styled_df, use_container_width=True, height=600)
-            st.download_button("📥 Tải Bảng (CSV)", df_f.drop(columns=['Ngay_Goc']).to_csv(index=False, encoding='utf-8-sig'), f"Tide_{thang_ch}.csv", "text/csv")
         else:
             st.info("Vui lòng chọn ít nhất một điểm để hiển thị dữ liệu.")
+
+# ----------------- TAB 5: SLACK WATER WINDOW (TÍNH TỪ LÕI GỐC) -----------------
+with tab_window:
+    st.markdown("""
+    <style>
+        .tag-hw { background-color: #e3f2fd; color: #007bff; padding: 4px 10px; border-radius: 12px; font-weight: bold; border: 1px solid #007bff; display: inline-block; text-align: center; }
+        .tag-lw { background-color: #fce4e4; color: #dc3545; padding: 4px 10px; border-radius: 12px; font-weight: bold; border: 1px solid #dc3545; display: inline-block; text-align: center; }
+        .tag-dir-in { background-color: #e8f8f5; color: #117a65; font-size: 1.2em; font-weight: bold; border-radius: 50%; padding: 0 5px; }
+        .tag-dir-out { background-color: #fef9e7; color: #d35400; font-size: 1.2em; font-weight: bold; border-radius: 50%; padding: 0 5px; }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    col_win_1, col_win_2 = st.columns([2, 8])
+    with col_win_1:
+        st.markdown("<p style='margin-top: 10px; font-weight: bold; font-size: 16px;'>🔄 Chế độ hiển thị:</p>", unsafe_allow_html=True)
+    with col_win_2:
+        view = st.radio("Chế độ hiển thị", ("Week", "Month"), horizontal=True, label_visibility="collapsed")
+        
+    if view == "Week":
+        sel_d = st.date_input("🗓️ Chọn ngày mốc:", bay_gio.date())
+        start = pd.Timestamp(sel_d) - pd.Timedelta(days=1)
+        end = start + pd.Timedelta(days=6)
+    else:
+        col_m1, col_m2 = st.columns(2)
+        with col_m1: s_month = st.selectbox("📅 Tháng:", list(range(1, 13)), index=bay_gio.month-1)
+        with col_m2: s_year = st.selectbox("📅 Năm:", [2025, 2026, 2027], index=1)
+        start = pd.Timestamp(year=s_year, month=s_month, day=1)
+        end = start + pd.offsets.MonthEnd()
+
+    if df_slack.empty:
+        st.warning("Không có dữ liệu Window. Vui lòng kiểm tra lại file Excel (Sheet HLW-VT).")
+    else:
+        df_show = df_slack[(df_slack['Event_Datetime'] >= start) & (df_slack['Event_Datetime'] <= end)].copy()
+        
+        df_show['Date'] = df_show['Event_Datetime'].dt.strftime('%d/%m/%Y')
+        df_show.loc[df_show['Date'] == df_show['Date'].shift(), 'Date'] = ""
+        df_show['Vũng Tàu'] = df_show['Event_Datetime'].dt.strftime('%H:%M') + "<br><b>" + df_show['Level(m)'].astype(str) + "m</b>"
+        
+        df_show['Type'] = df_show['Ký hiệu'].apply(lambda x: f"<div class='tag-hw'>{x}</div>" if x == 'HW' else f"<div class='tag-lw'>{x}</div>")
+        df_show['Dir Tag'] = df_show['Dir'].apply(lambda x: f"<span class='tag-dir-in'>{x}</span>" if x == '↙' else f"<span class='tag-dir-out'>{x}</span>")
+        
+        df_show['Slack CL'] = df_show['Slack CL'].apply(lambda x: f"<b>{x}</b>")
+        df_show['Slack CM'] = df_show['Slack CM'].apply(lambda x: f"<b>{x}</b>")
+        
+        df_show['Win Cát Lái'] = df_show.apply(lambda r: f"{format_win_str(r['B_CL'], r['Event_Datetime'])} - {format_win_str(r['E_CL'], r['Event_Datetime'])}", axis=1)
+        df_show['Win CM(Lớn)'] = df_show.apply(lambda r: f"{format_win_str(r['B_CM1'], r['Event_Datetime'])} - {format_win_str(r['E_CM1'], r['Event_Datetime'])}", axis=1)
+        df_show['Win CM(Nhỏ)'] = df_show.apply(lambda r: f"{format_win_str(r['B_CM2'], r['Event_Datetime'])} - {format_win_str(r['E_CM2'], r['Event_Datetime'])}", axis=1)
+
+        tab_view_cl, tab_view_cm = st.tabs(["⚓ TRẠM CÁT LÁI", "🚢 TRẠM CÁI MÉP"])
+        
+        with tab_view_cl:
+            disp_cl = df_show[['Date', 'Type', 'Vũng Tàu', 'Dir Tag', 'Slack CL', 'Win Cát Lái']]
+            st.write(disp_cl.to_html(escape=False, index=False, classes="tide-table"), unsafe_allow_html=True)
+            
+        with tab_view_cm:
+            disp_cm = df_show[['Date', 'Type', 'Vũng Tàu', 'Dir Tag', 'Slack CM', 'Win CM(Lớn)', 'Win CM(Nhỏ)']]
+            st.write(disp_cm.to_html(escape=False, index=False, classes="tide-table"), unsafe_allow_html=True)
 
 # ==========================================
 # DISCLAIMER PHÁP LÝ CHUẨN QUỐC TẾ
