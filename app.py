@@ -504,7 +504,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚢 TAN CANG PILOT V3.5")
+st.title("🚢 SNP Tide Calc V3.5")
 
 st.markdown("""
 <div style="font-size: 0.65em; margin-bottom: 20px; padding: 10px; background-color: rgba(128,128,128,0.1); border-radius: 5px; opacity: 0.9;">
